@@ -1,0 +1,356 @@
+pred_bat:
+  module: predbat
+  class: PredBat
+
+  # ---------------------------------------------------------------
+  # General
+  # ---------------------------------------------------------------
+
+  prefix: predbat
+
+  timezone: Europe/London
+
+  currency_symbols:
+    - "£"
+    - "p"
+
+  threads: auto
+
+  forecast_hours: 48
+
+  days_previous:
+    - 28
+
+  # ---------------------------------------------------------------
+  # Load ML prediction
+  # ---------------------------------------------------------------
+
+  load_ml_enable: true
+
+  load_ml_source: true
+
+  load_ml_max_days_history: 28
+
+  load_ml_database_days: 90
+
+  temperature_enable: true
+
+  # ---------------------------------------------------------------
+  # AlphaESS custom inverter - Modbus only
+  # ---------------------------------------------------------------
+
+  num_inverters: 1
+
+  inverter_type: "ALPHAESS_MODBUS"
+
+  inverter:
+    name: "AlphaESS SMILE-G3 Modbus"
+
+    has_rest_api: false
+    has_mqtt_api: false
+    has_service_api: true
+
+    output_charge_control: "none"
+
+    charge_control_immediate: false
+
+    current_dp: 1
+
+    charge_discharge_with_rate: false
+
+    has_charge_enable_time: false
+
+    has_discharge_enable_time: false
+
+    has_target_soc: false
+
+    target_soc_used_for_discharge: false
+
+    has_reserve_soc: false
+
+    has_timed_pause: false
+
+    time_button_press: false
+
+    support_charge_freeze: true
+
+    support_discharge_freeze: false
+
+    has_ge_inverter_mode: false
+
+    has_fox_inverter_mode: false
+
+    has_idle_time: false
+
+    has_time_window: false
+
+    charge_time_format: "S"
+
+    charge_time_entity_is_option: false
+
+    can_span_midnight: true
+
+    clock_time_format: "%Y-%m-%d %H:%M:%S"
+
+    num_load_entities: 1
+
+    soc_units: "%"
+
+    write_and_poll_sleep: 2
+
+  # ---------------------------------------------------------------
+  # AlphaESS Modbus control
+  # ---------------------------------------------------------------
+
+  charge_start_service:
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_export
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_discharging
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_import
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_charging_stop_at_soc
+      value: "{target_soc}"
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_charging_duration
+      value: 480
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_charging_power
+      value: 6.0
+
+    - service: switch.turn_on
+      entity_id: switch.your_inverter_force_charging_hold
+
+    - service: switch.turn_on
+      entity_id: switch.your_inverter_force_charging
+
+  charge_freeze_service:
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_export
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_discharging
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_import
+
+    - service: switch.turn_on
+      entity_id: switch.your_inverter_force_charging_hold
+
+    - service: switch.turn_on
+      entity_id: switch.your_inverter_force_charging
+
+  charge_stop_service:
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_charging
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_charging_hold
+
+  discharge_start_service:
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_charging
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_charging_hold
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_discharging
+
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_import
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_export_stop_at_soc
+      value: "{target_soc}"
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_export_duration
+      value: 480
+
+    - service: number.set_value
+      entity_id: number.your_inverter_force_export_power
+      value: 6.0
+
+    - service: switch.turn_on
+      entity_id: switch.your_inverter_force_export
+
+  discharge_stop_service:
+    - service: switch.turn_off
+      entity_id: switch.your_inverter_force_export
+
+  # ---------------------------------------------------------------
+  # Battery state
+  # ---------------------------------------------------------------
+
+  soc_percent:
+    - sensor.your_inverter_battery_state_of_charge
+
+  soc_max:
+    - 13.68
+
+  # ---------------------------------------------------------------
+  # Live power
+  # ---------------------------------------------------------------
+
+  battery_power:
+    - sensor.your_inverter_battery_power
+
+  battery_power_invert: false
+
+  pv_power:
+    - sensor.your_inverter_current_pv_production
+
+  load_power:
+    - sensor.your_inverter_current_house_load
+
+  load_power_invert: false
+
+  grid_power:
+    - sensor.your_inverter_grid_power
+
+  grid_power_invert: true
+
+  # ---------------------------------------------------------------
+  # Daily energy
+  # ---------------------------------------------------------------
+
+  load_today:
+    - sensor.your_inverter_total_house_load
+
+  import_today:
+    - sensor.your_inverter_today_grid_import
+
+  export_today:
+    - sensor.your_inverter_today_grid_export
+
+  pv_today:
+    - sensor.your_inverter_today_pv_generation
+
+  # ---------------------------------------------------------------
+  # Battery / inverter characteristics
+  # ---------------------------------------------------------------
+
+  battery_rate_max:
+    - 8000
+
+  inverter_limit:
+    - 8000
+
+  inverter_limit_charge:
+    - 6000
+
+  inverter_limit_discharge:
+    - 6000
+
+  inverter_limit_export:
+    - 6000
+
+  battery_min_soc:
+    - 20
+
+  battery_scaling:
+    - 1.0
+
+  balance_inverters_seconds: 0
+
+  # ---------------------------------------------------------------
+  # Clock skew
+  # ---------------------------------------------------------------
+
+  inverter_clock_skew_start: 0
+  inverter_clock_skew_end: 0
+  inverter_clock_skew_discharge_start: 0
+  inverter_clock_skew_discharge_end: 0
+
+  clock_skew: 0
+
+  # ---------------------------------------------------------------
+  # Solcast forecast
+  # ---------------------------------------------------------------
+
+  pv_forecast_today: sensor.solcast_pv_forecast_forecast_today
+
+  pv_forecast_tomorrow: sensor.solcast_pv_forecast_forecast_tomorrow
+
+  pv_forecast_d3: sensor.solcast_pv_forecast_forecast_day_3
+
+  pv_forecast_d4: sensor.solcast_pv_forecast_forecast_day_4
+
+  # ---------------------------------------------------------------
+  # EV charger awareness
+  # ---------------------------------------------------------------
+
+  num_cars: 1
+
+  car_charging_now:
+    - switch.your_ev_charger_charging
+
+  car_charging_now_response:
+    - "on"
+
+  car_charging_energy:
+    - sensor.your_ev_energy_today
+
+  # ---------------------------------------------------------------
+  # Octopus Intelligent Go awareness
+  # ---------------------------------------------------------------
+
+  octopus_intelligent_slot:
+    binary_sensor.your_octopus_intelligent_dispatching
+
+  octopus_ready_time:
+    select.your_octopus_target_time
+
+  octopus_charge_limit:
+    number.your_octopus_charge_target
+
+  octopus_slot_low_rate: true
+
+  combine_charge: true
+
+  calculate_export_during_charge: false
+
+  # ---------------------------------------------------------------
+  # PredBat watch list
+  # ---------------------------------------------------------------
+
+  watch_list:
+    - "{octopus_intelligent_slot}"
+    - "{octopus_ready_time}"
+    - "{octopus_charge_limit}"
+    - "+[car_charging_now]"
+
+  # ---------------------------------------------------------------
+  # Octopus Energy rates
+  # ---------------------------------------------------------------
+
+  metric_octopus_import:
+    sensor.your_octopus_import_rate
+
+  metric_octopus_export:
+    sensor.your_octopus_export_rate
+
+  metric_standing_charge:
+    sensor.your_octopus_standing_charge
+
+  # ---------------------------------------------------------------
+  # Export rate override
+  # ---------------------------------------------------------------
+
+  rates_export_override:
+    - start: "23:30:00"
+      end: "05:30:00"
+      rate: 0
+
+  # ---------------------------------------------------------------
+  # Scaling
+  # ---------------------------------------------------------------
+
+  import_export_scaling: 1.0
