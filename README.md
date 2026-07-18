@@ -1,14 +1,14 @@
-PredBat AlphaESS Modbus Example Configuration
+**PredBat AlphaESS Modbus Example Configuration**
 
 Disclaimer: This repository contains an example PredBat configuration for an AlphaESS system using the Home Assistant Modbus integration. It is intended as a reference only and is not a drop-in configuration.
 
-Purpose
+**Purpose**
 
 This repository is provided to help other AlphaESS users understand how PredBat can be configured when using the Home Assistant Modbus integration rather than the AlphaESS cloud integration.
 
 Every Home Assistant installation is different, so entity names, hardware capabilities and integrations will vary. You should expect to modify this configuration to suit your own installation.
 
-Important
+**Important**
 
 This configuration has been anonymised before being published. Any entity names containing:
 
@@ -34,7 +34,7 @@ The published configuration therefore references that custom sensor simply to de
 
 If your installation already has a suitable daily house load sensor, you should use that instead. Otherwise, you will need to create an equivalent sensor appropriate for your own system.
 
-What you’ll need to change
+**What you’ll need to change**
 
 At a minimum you should review and update:
 
@@ -47,7 +47,7 @@ At a minimum you should review and update:
 * Octopus Energy entities (if applicable).
 * Any custom sensors.
 
-Notes
+**Notes**
 
 This configuration reflects one particular installation and one user’s preferred operating strategy. It is not intended to be the “correct” or “best” way to configure PredBat.
 
@@ -55,7 +55,7 @@ There are many ways to achieve the same result, and your hardware, tariff, batte
 
 Suggestions and improvements are always welcome.
 
-Disclaimer
+**Disclaimer**
 
 This configuration is provided as-is, without any warranty or guarantee.
 
