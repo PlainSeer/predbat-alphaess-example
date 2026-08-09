@@ -1,115 +1,319 @@
 # -----------------------------------------------------------------------------
-# Home Assistant example: AlphaESS charge-target +10 percentage-point watchdog
+# Home Assistant example: PredBat -> AlphaESS export stop-SoC +10 correction
 # -----------------------------------------------------------------------------
-# EXAMPLE ONLY - NOT DROP-IN READY.
+# EXAMPLE ONLY - REVIEW BEFORE USE.
 #
-# This is deliberately independent of PredBat/AppDaemon. Its purpose is to
-# re-assert a safety/behaviour margin if the AlphaESS force-charge stop-at-SoC
-# number is changed while a managed force-charge is active.
+# This file matches the entity naming and control flow used by the accompanying
+# apps.yaml example.
 #
-# Replace EVERY entity containing REPLACE_ME before use.
-# Test manually and in PredBat Monitor/Read-only mode first.
+# In apps.yaml, PredBat starts a deliberate battery export with:
+#
+#   - service: script.predbat_alphaess_export_stop_soc
+#     target_soc: "{target_soc}"
+#
+# PredBat's target_soc is its INTERNAL export/discharge control target. On the
+# AlphaESS setup this example was developed against, the corresponding physical
+# export endpoint was consistently observed around 10 percentage points higher.
+#
+# Examples observed during testing:
+#
+#   PredBat target 10% -> AlphaESS physical stop target 20%
+#   PredBat target 21% -> AlphaESS physical stop target 31%
+#   PredBat target 64% -> AlphaESS physical stop target 74%
+#
+# The Home Assistant script below therefore:
+#
+#   1. receives PredBat's raw target_soc;
+#   2. stores that raw value in an input_number helper;
+#   3. adds 10 PERCENTAGE POINTS;
+#   4. caps the result at 100%;
+#   5. writes the corrected absolute SoC to:
+#        number.alphaess_inverter_force_export_stop_at_soc
+#
+# A separate watchdog automation then re-checks the value while AlphaESS Force
+# Export is active. If another write changes the inverter stop-SoC, Home Assistant
+# restores the expected corrected value.
+#
+# This keeps PredBat's own optimisation target unchanged while giving AlphaESS
+# a native inverter-side stop point between PredBat plan recalculations.
+#
+# IMPORTANT: the +10 rule described here is specific to the tested behaviour of
+# this setup. Verify the relationship on your own AlphaESS inverter/firmware.
+# Do not assume the same offset is appropriate for every system.
 # -----------------------------------------------------------------------------
 
-# Suggested helper (create through Settings -> Devices & services -> Helpers,
-# or define in YAML if you manage helpers that way):
+
+# =============================================================================
+# STEP 1 - CREATE THE HOME ASSISTANT HELPER
+# =============================================================================
+#
+# Recommended UI method:
+#
+#   Settings -> Devices & services -> Helpers -> Create helper -> Number
+#
+# Use:
+#
+#   Name: PredBat AlphaESS raw export target SoC
+#   Minimum: 0
+#   Maximum: 100
+#   Step size: 1
+#   Unit of measurement: %
+#
+# Give/confirm the entity ID as:
+#
+#   input_number.predbat_alphaess_raw_export_target_soc
+#
+# Alternatively, if you manage helpers in YAML, the equivalent is:
 #
 # input_number:
-#   REPLACE_ME_predbat_requested_charge_soc:
-#     name: PredBat requested charge SoC
+#   predbat_alphaess_raw_export_target_soc:
+#     name: PredBat AlphaESS raw export target SoC
 #     min: 0
 #     max: 100
 #     step: 1
 #     unit_of_measurement: "%"
 #
-# The helper should contain PredBat's RAW requested target, before the +10
-# percentage-point margin is applied. How you populate it depends on your
-# PredBat configuration/version. Do not guess an entity ID from this example.
+# The helper is deliberately OUTSIDE PredBat. It remembers the most recent RAW
+# target that PredBat requested, before the AlphaESS +10 correction is applied.
+# =============================================================================
 
-- id: REPLACE_ME_alphaess_predbat_charge_soc_margin_watchdog
-  alias: "EXAMPLE - AlphaESS PredBat charge SoC +10 watchdog"
+
+# =============================================================================
+# STEP 2 - CREATE THE SCRIPT USED BY apps.yaml
+# =============================================================================
+#
+# The apps.yaml example calls:
+#
+#   script.predbat_alphaess_export_stop_soc
+#
+# with:
+#
+#   target_soc: "{target_soc}"
+#
+# Create the following script in Home Assistant. If you use the UI script editor,
+# switch to YAML mode and use the body below. If you maintain scripts.yaml, add
+# the keyed script definition shown here.
+# =============================================================================
+
+predbat_alphaess_export_stop_soc:
+  alias: "PredBat - AlphaESS export stop SoC (+10)"
   description: >-
-    Re-applies the configured +10 percentage-point charge target margin while
-    PredBat-managed AlphaESS force charging is active. Example only; replace all
-    entities and validate behaviour on your own inverter before enabling.
+    Receives PredBat's raw deliberate-export target SoC, stores it for the
+    watchdog, adds 10 percentage points capped at 100%, and writes the corrected
+    stop target to the AlphaESS Modbus Force Export stop-at-SoC entity.
+
+  mode: restart
+
+  fields:
+    target_soc:
+      name: PredBat target SoC
+      description: Raw export/discharge target supplied by PredBat.
+      required: true
+      example: 20
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+  sequence:
+    - variables:
+        raw_target_soc: >-
+          {{ target_soc | float(0) }}
+
+        corrected_target_soc: >-
+          {{ [raw_target_soc + 10, 100] | min }}
+
+    # Reject obviously invalid input rather than writing an accidental value.
+    - condition: template
+      value_template: >-
+        {{ raw_target_soc >= 0 and raw_target_soc <= 100 }}
+
+    # Remember exactly what PredBat requested BEFORE the +10 correction.
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.predbat_alphaess_raw_export_target_soc
+      data:
+        value: "{{ raw_target_soc }}"
+
+    # Write the corrected absolute SoC to the AlphaESS Modbus control entity.
+    - service: number.set_value
+      target:
+        entity_id: number.alphaess_inverter_force_export_stop_at_soc
+      data:
+        value: "{{ corrected_target_soc }}"
+
+
+# =============================================================================
+# STEP 3 - CREATE THE WATCHDOG AUTOMATION
+# =============================================================================
+#
+# Purpose:
+#
+# PredBat recalculates periodically. AlphaESS Force Export has its own native
+# stop-at-SoC number. The watchdog makes sure that, while deliberate Force Export
+# is actually active, the inverter-side stop target remains equal to:
+#
+#       PredBat raw target + 10 percentage points
+#
+# capped at 100%.
+#
+# It does NOT change PredBat's own target.
+# It does NOT run when Force Export is off.
+# It does NOT modify the normal AlphaESS battery minimum-SoC setting.
+#
+# Add this block to automations.yaml, or recreate it in the HA automation UI.
+# =============================================================================
+
+- id: predbat_alphaess_export_stop_soc_watchdog
+  alias: "PredBat - AlphaESS export stop SoC watchdog"
+  description: >-
+    While AlphaESS Force Export is active, keep the inverter's native export
+    stop-at-SoC equal to PredBat's last raw target plus 10 percentage points,
+    capped at 100%.
 
   mode: restart
 
   trigger:
-    # Re-check whenever the inverter target is changed.
+    # Someone/something changed the AlphaESS stop target.
     - platform: state
-      entity_id: number.REPLACE_ME_alphaess_force_charging_stop_at_soc
+      entity_id: number.alphaess_inverter_force_export_stop_at_soc
 
-    # Re-check when managed force charging starts.
+    # PredBat supplied a new raw target through the wrapper script.
     - platform: state
-      entity_id: switch.REPLACE_ME_alphaess_force_charging
+      entity_id: input_number.predbat_alphaess_raw_export_target_soc
+
+    # Force Export has just started - verify the target immediately.
+    - platform: state
+      entity_id: switch.alphaess_inverter_force_export
       to: "on"
 
-    # Re-check if PredBat's raw requested target changes.
-    - platform: state
-      entity_id: input_number.REPLACE_ME_predbat_requested_charge_soc
-
-    # Periodic safety re-check. Adjust/remove only after understanding why it is
-    # present; do not use an unnecessarily aggressive interval.
+    # Periodic safety check in case an external change was missed.
     - platform: time_pattern
       minutes: "/5"
 
   condition:
-    # Only interfere while the force-charge dispatch is active.
+    # Only interfere during deliberate AlphaESS Force Export.
     - condition: state
-      entity_id: switch.REPLACE_ME_alphaess_force_charging
-      state: "on"
-
-    # Optional second guard: require the hold switch too, if this is how your
-    # PredBat-managed charge is identified.
-    - condition: state
-      entity_id: switch.REPLACE_ME_alphaess_force_charging_hold
+      entity_id: switch.alphaess_inverter_force_export
       state: "on"
 
   action:
     - variables:
-        requested_soc: >-
-          {{ states('input_number.REPLACE_ME_predbat_requested_charge_soc') | float(0) }}
-        protected_soc: >-
-          {{ [requested_soc + 10, 100] | min }}
-        inverter_soc: >-
-          {{ states('number.REPLACE_ME_alphaess_force_charging_stop_at_soc') | float(-1) }}
+        raw_target_soc: >-
+          {{ states('input_number.predbat_alphaess_raw_export_target_soc') | float(-1) }}
 
-    # Do nothing if the source target is invalid/uninitialised.
+        expected_alphaess_stop_soc: >-
+          {{ [raw_target_soc + 10, 100] | min }}
+
+        current_alphaess_stop_soc: >-
+          {{ states('number.alphaess_inverter_force_export_stop_at_soc') | float(-1) }}
+
+    # Ignore an unavailable/uninitialised helper rather than writing nonsense.
     - condition: template
       value_template: >-
-        {{ requested_soc > 0 and requested_soc <= 100 }}
+        {{ raw_target_soc >= 0 and raw_target_soc <= 100 }}
 
-    # Only write when the current value differs. This prevents unnecessary
-    # Modbus writes and avoids an automation feedback loop.
+    # Avoid needless Modbus writes and prevent a state-change feedback loop.
     - condition: template
       value_template: >-
-        {{ (inverter_soc - protected_soc) | abs > 0.1 }}
+        {{ (current_alphaess_stop_soc - expected_alphaess_stop_soc) | abs > 0.1 }}
 
     - service: number.set_value
       target:
-        entity_id: number.REPLACE_ME_alphaess_force_charging_stop_at_soc
+        entity_id: number.alphaess_inverter_force_export_stop_at_soc
       data:
-        value: "{{ protected_soc }}"
+        value: "{{ expected_alphaess_stop_soc }}"
 
-# -----------------------------------------------------------------------------
-# IMPORTANT BEHAVIOUR NOTES
-# -----------------------------------------------------------------------------
-# 1. '+10%' here means +10 PERCENTAGE POINTS, not multiplying the target by 1.10.
-#    Example: a raw PredBat target of 80% becomes 90%, not 88%.
+
+# =============================================================================
+# HOW THIS FITS THE apps.yaml EXAMPLE
+# =============================================================================
 #
-# 2. The result is capped at 100%.
+# PredBat discharge/export sequence:
 #
-# 3. This watchdog is intentionally outside PredBat. If PredBat restarts or a
-#    later service call changes the AlphaESS number, HA can re-check the target.
+#   PredBat decides to deliberately export down to target_soc
+#       |
+#       v
+#   discharge_start_service in apps.yaml
+#       |
+#       +--> turns off switch.alphaess_inverter_dispatch
+#       +--> turns off force charge / hold / force discharge / force import
+#       |
+#       +--> calls script.predbat_alphaess_export_stop_soc
+#       |       |
+#       |       +--> saves RAW target in
+#       |       |    input_number.predbat_alphaess_raw_export_target_soc
+#       |       |
+#       |       +--> adds 10 percentage points, capped at 100
+#       |       |
+#       |       +--> writes corrected target to
+#       |            number.alphaess_inverter_force_export_stop_at_soc
+#       |
+#       +--> sets number.alphaess_inverter_force_export_duration
+#       +--> sets number.alphaess_inverter_force_export_power
+#       +--> turns on switch.alphaess_inverter_force_export
 #
-# 4. The watchdog must NOT run continuously against manual charging unless that
-#    is specifically what you want. The force-charge/hold conditions above are
-#    intended to scope it to the managed dispatch.
+# Once Force Export is on, the watchdog verifies that the stop-at-SoC remains at
+# the corrected value. When PredBat's discharge_stop_service turns Force Export
+# off, the watchdog condition becomes false and it stops interfering.
 #
-# 5. This example applies the margin to CHARGING only. Do not copy the +10 rule
-#    to discharge/export stop-at-SoC without independently validating the
-#    meaning and behaviour of that register on your inverter/firmware.
+# This is intentionally separate from:
 #
-# 6. A watchdog is not a substitute for the inverter/BMS hardware minimum and
-#    maximum protections. Keep all native AlphaESS/BMS safety limits intact.
+#   battery_min_soc
+#
+# in apps.yaml. battery_min_soc affects PredBat planning; this wrapper/watchdog
+# controls the AlphaESS native hard stop used during a deliberate Force Export.
+# =============================================================================
+
+
+# =============================================================================
+# IMPORTANT SAFETY / BEHAVIOUR NOTES
+# =============================================================================
+#
+# 1. "+10%" means +10 PERCENTAGE POINTS.
+#
+#       20% -> 30%
+#       64% -> 74%
+#
+#    It does NOT mean multiplying by 1.10.
+#
+# 2. The corrected result is capped at 100%.
+#
+# 3. This example applies ONLY to the deliberate Force Export / discharge target
+#    described in apps.yaml. It is not a charge-target adjustment.
+#
+# 4. The watchdog runs only while:
+#
+#       switch.alphaess_inverter_force_export == on
+#
+#    so it should not continually overwrite manual settings when PredBat is not
+#    deliberately exporting.
+#
+# 5. The helper exists so Home Assistant has an independent record of PredBat's
+#    raw requested target. Without that value, the watchdog cannot know whether
+#    an inverter stop target should be 20%, 31%, 74%, etc.
+#
+# 6. The watchdog is deliberately outside PredBat/AppDaemon. That gives Home
+#    Assistant a second layer that can re-assert the expected native AlphaESS
+#    stop target between PredBat plan updates.
+#
+# 7. The AlphaESS/BMS native hardware protections remain the final safety layer.
+#    Do not disable or weaken them because this automation exists.
+#
+# 8. Verify the +10 relationship on your own inverter and firmware before using
+#    this example. Different AlphaESS models/firmware may behave differently.
+#
+# 9. Test the script manually with a harmless target before allowing PredBat to
+#    invoke it automatically. Confirm in Developer Tools -> States that the
+#    helper receives the raw value and the AlphaESS number receives raw + 10.
+#
+# 10. Test the watchdog by temporarily changing
+#
+#       number.alphaess_inverter_force_export_stop_at_soc
+#
+#     while Force Export is active and confirm Home Assistant restores the
+#     expected value. Carry out live inverter tests cautiously and only when you
+#     understand the power-flow consequences.
+# =============================================================================
