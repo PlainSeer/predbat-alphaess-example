@@ -868,6 +868,154 @@ Users with a different tariff interpretation or different PredBat behaviour may 
 
 ---
 
+# Intelligent Octopus Go: earned 30-minute cheap-rate periods
+
+This setup also uses an **earned half-hour** concept for Intelligent Octopus Go.
+
+The reason is that an Intelligent dispatch and actual EV charging are not quite the same thing. A dispatch can exist while the vehicle is waiting, paused, already full, or otherwise not taking meaningful power. For this setup, a new half-hour is therefore only treated as earned when both of these are true:
+
+```text
+Intelligent Octopus dispatch is active
+AND
+Hypervolt EV charging is above 1 kW
+```
+
+When those conditions occur during a billing half-hour, that **current HH:00-HH:30 or HH:30-HH:00 period is earned**.
+
+Once earned, the period remains valid until its natural half-hour boundary even if the EV stops charging before the boundary. This matters because the tariff treatment applies to the billing period, whereas the EV may only need to charge for part of it.
+
+The critical safeguard is that the earned state does **not** roll into the next half-hour automatically.
+
+For example:
+
+```text
+20:07  EV >1 kW + Intelligent Dispatching ON
+       -> 20:00-20:30 is earned
+
+20:18  EV stops
+       -> 20:00-20:30 remains earned
+
+20:30  earned timer expires
+       -> 20:30-21:00 is NOT automatically cheap
+```
+
+If the EV is still genuinely charging and Intelligent Dispatching is genuinely active after 20:30, then 20:30-21:00 can earn itself independently.
+
+This prevents a stale dispatch state from making an indefinite run of future half-hours look cheap to Home Assistant or PredBat.
+
+## Installing the earned-half-hour helper
+
+A complete anonymised example is included in:
+
+```text
+home_assistant_iog_earned_half_hour.example.yaml
+```
+
+The example uses a Home Assistant **Timer helper** named:
+
+```text
+timer.predbat_iog_earned_half_hour
+```
+
+To create it through the Home Assistant UI:
+
+1. Open **Settings → Devices & services → Helpers**.
+2. Select **Create helper**.
+3. Choose **Timer**.
+4. Name it `PredBat IOG Earned Half Hour`.
+5. Home Assistant should create an entity similar to `timer.predbat_iog_earned_half_hour`.
+
+There is no need to give the helper a fixed 30-minute duration. The automation calculates the remaining seconds to the **next** HH:00 or HH:30 boundary and starts the timer for exactly that remaining time.
+
+That distinction is important. If the EV starts at 20:23, the current earned period only lasts seven minutes — until 20:30 — rather than creating a new 30-minute window ending at 20:53.
+
+## Installing the earning automation
+
+The supplied example automation watches:
+
+```text
+binary_sensor.hypervolt_ev_charging_above_1kw
+binary_sensor.octopus_energy_xxxxxx_intelligent_dispatching
+```
+
+It also performs a periodic safety check and checks again after Home Assistant starts.
+
+A new period is earned only when **both** binary sensors are `on`.
+
+The automation then calculates the next billing boundary and starts:
+
+```text
+timer.predbat_iog_earned_half_hour
+```
+
+When that timer is `active`, other Home Assistant automations can interpret it as:
+
+> The current Octopus billing half-hour has already qualified and should remain treated as the earned cheap period until this boundary.
+
+## Using the earned period for the Energy dashboard / tariff helper
+
+If you maintain an off-peak helper for Home Assistant Energy calculations, its logic should include the earned timer as an additional valid off-peak state.
+
+Conceptually:
+
+```text
+OFF PEAK = normal scheduled cheap period
+           OR earned-half-hour timer is active
+```
+
+Do **not** simply use `Intelligent Dispatching == on` as the earned-state test. That is precisely the stale/planned-state problem this mechanism is intended to avoid.
+
+## PredBat reaction when the car stops
+
+The current `apps.yaml` already includes:
+
+```yaml
+- binary_sensor.hypervolt_ev_charging_above_1kw
+```
+
+in `watch_list`.
+
+Therefore a genuine EV charging start/stop gives PredBat a reason to recalculate promptly rather than waiting only for the next normal periodic run.
+
+The earned timer and the active-charging sensor serve different purposes:
+
+```text
+Hypervolt >1 kW sensor
+    -> tells PredBat whether the car is physically charging NOW
+
+Earned half-hour timer
+    -> tells Home Assistant that THIS billing half-hour has already qualified
+       even if charging subsequently stops
+```
+
+That is why stopping the car should not erase the cheap status of the current earned half-hour, but it **should** stop the EV from being treated as actively charging.
+
+At the next half-hour boundary, the timer expires. The following period only earns if the real charging + dispatch conditions are satisfied again.
+
+## Restart behaviour
+
+The example includes a Home Assistant start trigger and a periodic safety check. If you adapt the design, make sure a Home Assistant restart cannot leave an earned period permanently active or accidentally roll it into a later half-hour.
+
+A timer/helper used for tariff accounting should always be bounded by the actual HH:00/HH:30 period it represents.
+
+## Testing the earned-half-hour setup
+
+Before relying on it, test it with PredBat in Monitor/read-only mode:
+
+1. Confirm the Hypervolt >1 kW binary sensor is off when the car is merely plugged in.
+2. Confirm Intelligent Dispatching alone does not earn a half-hour.
+3. Start a genuine IOG charge and confirm the timer becomes active.
+4. Stop the EV before the half-hour boundary and confirm the timer remains active.
+5. Wait for HH:00 or HH:30 and confirm the timer expires.
+6. Confirm the following half-hour remains unearned if the EV is no longer charging.
+7. Confirm a continuing genuine dispatch + EV charge can earn the new half-hour independently.
+8. Check PredBat after the EV stops and ensure it recalculates rather than remaining indefinitely in an EV-related state.
+9. Check your Home Assistant tariff/Energy helper and confirm only the intended half-hours are recorded as cheap.
+
+The complete example YAML is provided separately so the logic can be copied and adapted without making the main PredBat `apps.yaml` harder to read.
+
+---
+
 # Tariff comparison vs the tariff used for normal operation
 
 The `compare_list` section is separate from the tariff PredBat uses to control the battery day-to-day.
@@ -976,15 +1124,16 @@ A safe commissioning sequence is:
 7. Confirm tariff rates.
 8. If using IOG, confirm BottlecapDave dispatch, target time, EV SoC and target entities.
 9. Confirm `binary_sensor.hypervolt_ev_charging_above_1kw` changes only when the EV genuinely charges.
-10. Test the +10 SoC wrapper script with Force Export **off**.
-11. Test Charge Freeze briefly and confirm the inverter enters the intended normal/self-consumption behaviour.
-12. Stop Charge Freeze and confirm Dispatch is released.
-13. Test Discharge Freeze briefly and confirm battery charging is prevented while normal house supply behaviour remains.
-14. Stop Discharge Freeze and confirm Dispatch is released.
-15. Test a very short/low-risk charge operation.
-16. Test a controlled export at a safe SoC with close supervision.
-17. Confirm the AlphaESS hard-stop SoC is the corrected value you expect.
-18. Only then allow normal automated PredBat control.
+10. If using earned IOG half-hours, confirm `timer.predbat_iog_earned_half_hour` starts only from real charging + Intelligent Dispatching and expires at HH:00/HH:30.
+11. Test the +10 SoC wrapper script with Force Export **off**.
+12. Test Charge Freeze briefly and confirm the inverter enters the intended normal/self-consumption behaviour.
+13. Stop Charge Freeze and confirm Dispatch is released.
+14. Test Discharge Freeze briefly and confirm battery charging is prevented while normal house supply behaviour remains.
+15. Stop Discharge Freeze and confirm Dispatch is released.
+16. Test a very short/low-risk charge operation.
+17. Test a controlled export at a safe SoC with close supervision.
+18. Confirm the AlphaESS hard-stop SoC is the corrected value you expect.
+19. Only then allow normal automated PredBat control.
 
 Do not perform first-time testing during an expensive tariff period or when the battery is near a critical SoC boundary.
 
@@ -1040,6 +1189,14 @@ A plugged-in sensor or Intelligent dispatch sensor is not enough for this setup.
 ## PredBat remains in an EV-related plan after charging stops
 
 Check that the Hypervolt binary sensor changes state promptly and that it is included in `watch_list` so PredBat gets a reason to recalculate.
+
+## Earned IOG half-hour disappears as soon as the EV stops
+
+The earned state should be represented by `timer.predbat_iog_earned_half_hour`, not directly by the live EV charging binary sensor. Once the current half-hour has earned, the timer should remain active until HH:00/HH:30 even if the EV stops.
+
+## Cheap IOG status rolls into the next half-hour when it should not
+
+Check that the timer expires at the actual half-hour boundary and is not simply restarted for a fixed 30 minutes from the original charging start time. The new period must independently satisfy both actual charging and Intelligent Dispatching before it earns.
 
 ## Load forecast looks erratic
 
@@ -1147,11 +1304,17 @@ Normal live tariff/dispatch information is read from Home Assistant entities.
 
 PredBat can react when charging starts/stops or Octopus modifies the dispatch/target information.
 
-## 15. Tariff comparison has been expanded
+## 15. Earned Intelligent Octopus half-hours are tracked separately
+
+Home Assistant can maintain `timer.predbat_iog_earned_half_hour` so the current billing half-hour remains recognised after a genuine IOG charge stops, without automatically rolling cheap treatment into the next half-hour.
+
+**Reason:** separate the facts "the EV is charging now" and "this billing half-hour has already qualified".
+
+## 16. Tariff comparison has been expanded
 
 The Compare page can simulate several alternative tariff combinations without changing the tariff being used for normal operation.
 
-## 16. Export-protection window is explicit
+## 17. Export-protection window is explicit
 
 A zero-valued export override is used during the selected cheap-rate window to stop PredBat deliberately exporting battery energy during that period.
 
@@ -1177,6 +1340,8 @@ At minimum, review all of the following:
 - `load_today` source.
 - export protection windows.
 - +10 SoC correction suitability for your inverter/firmware.
+- Intelligent Octopus dispatch entity if using the earned-half-hour example.
+- Energy/off-peak helper logic if you want earned half-hours reflected in Home Assistant tariff accounting.
 
 If you do not use Octopus, Hypervolt, Solcast or the AlphaESS cloud/API integration, remove or replace those sections rather than creating fake entities simply to satisfy the example.
 
