@@ -1,0 +1,179 @@
+# -----------------------------------------------------------------------------
+# Home Assistant example: Intelligent Octopus Go earned half-hour
+# -----------------------------------------------------------------------------
+# EXAMPLE ONLY - NOT DROP-IN READY.
+#
+# Purpose
+# -------
+# When an Intelligent Octopus Go dispatch is genuinely active AND the EV is
+# physically charging (>1 kW in this reference setup), mark the CURRENT billing
+# half-hour as "earned" until its natural HH:00 / HH:30 boundary.
+#
+# If the car stops after earning that period, the current half-hour remains
+# earned. The following half-hour is NOT automatically inherited; it must earn
+# itself again from a fresh active-dispatch + actual-charging condition.
+#
+# This is intentionally separate from PredBat's own planning logic. It gives HA
+# one authoritative state that can be used by tariff/energy-card automations and
+# by a PredBat recalculation trigger.
+#
+# Replace every xxxxxx/private entity with the equivalent from your system.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# 1. Create the timer helper
+# -----------------------------------------------------------------------------
+# UI method:
+#   Settings -> Devices & services -> Helpers -> Create helper -> Timer
+#   Name: PredBat IOG Earned Half Hour
+#
+# Expected entity ID used below:
+#   timer.predbat_iog_earned_half_hour
+#
+# YAML alternative:
+# timer:
+#   predbat_iog_earned_half_hour:
+#     name: PredBat IOG Earned Half Hour
+#
+# The timer duration is set dynamically so it always expires exactly on the next
+# HH:00 or HH:30 billing boundary.
+
+# -----------------------------------------------------------------------------
+# 2. Automation - earn the current half-hour
+# -----------------------------------------------------------------------------
+# Trigger whenever actual EV charging or Intelligent Dispatching changes, plus a
+# periodic safety check and HA startup recovery.
+
+- id: predbat_iog_earn_current_half_hour
+  alias: "PredBat - IOG Earn Current Half Hour"
+  description: >-
+    Earns only the current Octopus billing half-hour when Intelligent Dispatching
+    is active and the Hypervolt is genuinely charging above 1 kW. The timer then
+    preserves that earned state until the next HH:00/HH:30 boundary even if the
+    EV stops before the boundary.
+  mode: restart
+
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.hypervolt_ev_charging_above_1kw
+
+    - trigger: state
+      entity_id: binary_sensor.octopus_energy_xxxxxx_intelligent_dispatching
+
+    - trigger: time_pattern
+      minutes: "/5"
+
+    - trigger: homeassistant
+      event: start
+
+  conditions:
+    # Both conditions are required to EARN a new half-hour.
+    - condition: state
+      entity_id: binary_sensor.hypervolt_ev_charging_above_1kw
+      state: "on"
+
+    - condition: state
+      entity_id: binary_sensor.octopus_energy_xxxxxx_intelligent_dispatching
+      state: "on"
+
+  actions:
+    - variables:
+        seconds_to_boundary: >-
+          {% set minute = now().minute %}
+          {% set second = now().second %}
+          {% if minute < 30 %}
+            {{ ((30 - minute) * 60) - second }}
+          {% else %}
+            {{ ((60 - minute) * 60) - second }}
+          {% endif %}
+
+    - action: timer.start
+      target:
+        entity_id: timer.predbat_iog_earned_half_hour
+      data:
+        duration: >-
+          {{ [seconds_to_boundary | int(1), 1] | max }}
+
+# -----------------------------------------------------------------------------
+# 3. How to use the timer
+# -----------------------------------------------------------------------------
+# Treat the timer being ACTIVE as meaning:
+#
+#   "This exact HH:00-HH:30 or HH:30-HH:00 period has already been earned."
+#
+# Example template condition:
+#
+#   {{ is_state('timer.predbat_iog_earned_half_hour', 'active') }}
+#
+# This remains true after the car stops, but only until the billing boundary.
+# When the timer expires, there is NO carry-forward. A new half-hour must satisfy
+# the two earn conditions again.
+#
+# This is the important difference between:
+#
+#   binary_sensor.octopus_energy_xxxxxx_intelligent_dispatching
+#       = Octopus says an Intelligent dispatch is in play
+#
+#   binary_sensor.hypervolt_ev_charging_above_1kw
+#       = the EV is physically taking meaningful power
+#
+#   timer.predbat_iog_earned_half_hour
+#       = the current billing half-hour has already qualified and remains cheap
+#         for the rest of that same half-hour
+#
+# -----------------------------------------------------------------------------
+# 4. Energy-card / off-peak automation pattern
+# -----------------------------------------------------------------------------
+# If you already maintain an off-peak helper for your Energy dashboard, include
+# the earned timer as an OR condition. Replace the helper below with your own.
+#
+# Example concept:
+#
+#   off_peak = normal scheduled cheap rate
+#              OR timer.predbat_iog_earned_half_hour == active
+#
+# Do not use Intelligent Dispatching alone as the earned-period condition, or a
+# stale/planned dispatch can incorrectly mark periods cheap when the EV never
+# actually charged.
+#
+# -----------------------------------------------------------------------------
+# 5. PredBat recalculation / release behaviour
+# -----------------------------------------------------------------------------
+# The reference PredBat apps.yaml already watches the real charging sensor:
+#
+#   binary_sensor.hypervolt_ev_charging_above_1kw
+#
+# so a start/stop in actual charging causes PredBat to re-evaluate promptly.
+#
+# If your PredBat version/setup does not automatically re-run from its watch_list,
+# add your own PredBat recalculate/update action when:
+#   - actual EV charging changes, and
+#   - timer.predbat_iog_earned_half_hour finishes.
+#
+# Do NOT blindly copy an update-button/service entity name from another install;
+# use the recalculation action exposed by your own PredBat installation.
+#
+# -----------------------------------------------------------------------------
+# 6. Behaviour examples
+# -----------------------------------------------------------------------------
+# Example A:
+#   20:07  Intelligent Dispatching ON + EV >1 kW
+#          -> current 20:00-20:30 period is earned
+#   20:18  EV stops
+#          -> timer remains active
+#          -> 20:00-20:30 remains earned
+#   20:30  timer expires
+#          -> earned state ends
+#          -> 20:30-21:00 is NOT automatically earned
+#
+# Example B:
+#   20:30  EV is still >1 kW AND Intelligent Dispatching is still genuinely active
+#          -> automation runs again
+#          -> 20:30-21:00 earns itself independently
+#
+# Example C:
+#   20:30  Intelligent Dispatching remains ON but EV is no longer charging
+#          -> new period does NOT earn
+#
+# This boundary behaviour is deliberate and prevents stale Intelligent dispatch
+# state from rolling cheap-rate treatment forward indefinitely.
