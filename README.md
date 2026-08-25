@@ -417,6 +417,16 @@ Check:
 
 Check `battery_power_invert`, `grid_power_invert`, and `load_power_invert` against live Home Assistant states.
 
+## Credits
+
+This example brings together work from the following open-source projects:
+
+- [PredBat](https://github.com/springfall2008/batpred) by springfall2008 — battery planning, optimisation and inverter-control framework.
+- [ha-alphaess-modbus](https://github.com/senalse/ha-alphaess-modbus) by senalse — the Home Assistant AlphaESS Modbus integration that provides the inverter sensors and controls used by this example.
+- [Home Assistant Octopus Energy](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) by BottlecapDave — the Home Assistant tariff and Intelligent Octopus entities referenced by the optional Octopus configuration.
+
+Thank you to their maintainers and contributors. This repository is an independent example configuration and is not affiliated with or endorsed by those projects.
+
 ## Privacy
 
 Before sharing a derived configuration, remove API keys, meter/account identifiers, vehicle UUIDs, webhook URLs, notification targets, private hostnames and installation-specific automations.
