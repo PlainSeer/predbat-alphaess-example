@@ -193,19 +193,26 @@ another export-start command.
 After every `predbat.status` update that remains in `Exporting`, the
 automation therefore:
 
-1. reruns the export-stop-SoC script;
-2. waits one second for the AlphaESS Modbus write to settle;
-3. confirms PredBat is still `Exporting`;
-4. checks that the real AlphaESS Force Export switch is `off`;
-5. confirms actual battery SoC is more than one percentage point above the
+1. confirms the status detail still contains a parseable percentage;
+2. reruns the export-stop-SoC script, using the current AlphaESS stop target
+   instead of an arbitrary zero as its race-condition fallback;
+3. waits one second for the AlphaESS Modbus write to settle;
+4. confirms PredBat is still `Exporting`;
+5. checks that the real AlphaESS Force Export switch is `off`;
+6. confirms actual battery SoC is more than one percentage point above the
    configured stop target; and
-6. turns Force Export back on only when all checks pass.
+7. turns Force Export back on only when all checks pass.
+
+If the detail format cannot be parsed, the automation stops before any action:
+it preserves the existing AlphaESS target and does not restart Force Export.
+The direct export-start call in `apps.yaml` is unchanged and still supplies
+PredBat's genuine `{target_soc}` to the script.
 
 The one-percentage-point guard is important. The AlphaESS integration may
 legitimately auto-stop Force Export approximately 1% above the configured
 target. At that normal endpoint, the strict comparison
 `battery SoC > stop target + 1` is false, so the automation does not fight the
-inverter. Unknown or unavailable SoC/target readings also prevent a restart.
+inverter. Unknown or unavailable SoC/target readings also prevent a restart, and an unparseable PredBat detail prevents both the target write and restart.
 
 The resulting flow is:
 
