@@ -1,0 +1,27 @@
+# Home Assistant house-load energy example
+#
+# This creates the sensor used by apps.yaml:
+# sensor.alphaess_inverter_predbat_experimental_modbus_house_load_today
+#
+# Do not add this file unchanged unless the source entity below exists and
+# reports live whole-house power in watts. Use either these YAML definitions
+# or equivalent UI helpers, not both with the same names.
+
+sensor:
+  - platform: integration
+    source: sensor.alphaess_inverter_current_house_load
+    name: AlphaESS Inverter PredBat Experimental Modbus House Load Energy
+    unique_id: alphaess_inverter_predbat_experimental_modbus_house_load_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 4
+
+utility_meter:
+  alphaess_inverter_predbat_experimental_modbus_house_load_today:
+    name: AlphaESS Inverter PredBat Experimental Modbus House Load Today
+    unique_id: alphaess_inverter_predbat_experimental_modbus_house_load_today
+    source: sensor.alphaess_inverter_predbat_experimental_modbus_house_load_energy
+    cycle: daily
+    periodically_resetting: true
+    always_available: true
