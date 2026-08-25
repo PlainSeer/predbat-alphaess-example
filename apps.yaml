@@ -103,10 +103,10 @@ pred_bat:
     has_mqtt_api: false
     has_service_api: true
 
-    output_charge_control: "none"
+    output_charge_control: "power"
     charge_control_immediate: false
     current_dp: 1
-    charge_discharge_with_rate: false
+    charge_discharge_with_rate: true
 
     has_charge_enable_time: false
     has_discharge_enable_time: false
@@ -133,6 +133,14 @@ pred_bat:
     soc_units: "%"
     write_and_poll_sleep: 2
 
+  # PredBat writes these helpers to select the requested charge/export
+  # power. Home Assistant automations can map them to the AlphaESS controls.
+  charge_rate:
+    - input_number.predbat_alphaess_charge_rate_w
+
+  discharge_rate:
+    - input_number.predbat_alphaess_export_rate_w
+
   # ---------------------------------------------------------------
   # AlphaESS Modbus control
   # ---------------------------------------------------------------
@@ -158,10 +166,6 @@ pred_bat:
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_charging_duration
       value: 480
-
-    - service: number.set_value
-      entity_id: number.alphaess_inverter_force_charging_power
-      value: 6.0
 
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_force_charging_hold
@@ -260,10 +264,6 @@ pred_bat:
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_export_duration
       value: 480
-
-    - service: number.set_value
-      entity_id: number.alphaess_inverter_force_export_power
-      value: 7.0
 
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_force_export
@@ -372,6 +372,9 @@ pred_bat:
   pv_today:
     - sensor.alphaess_inverter_today_s_pv_generation
 
+  # PredBat uses a low discharge rate while holding an export freeze.
+  inverter_freeze_export_discharge_rate: 240
+
   # ---------------------------------------------------------------
   # Battery / inverter characteristics
   # ---------------------------------------------------------------
@@ -383,7 +386,7 @@ pred_bat:
     - 8000
 
   inverter_limit_charge:
-    - 6000
+    - 8000
 
   inverter_limit_discharge:
     - 8000
