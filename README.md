@@ -357,7 +357,14 @@ The export sequence calls `script.predbat_alphaess_export_stop_soc`, sets a boun
 
 ## Freeze mappings
 
-PredBat freeze capabilities are mapped to AlphaESS Dispatch modes.
+PredBat freeze capabilities are mapped to AlphaESS Dispatch modes. PredBat's plan uses the name **Freeze Export**, while the custom-inverter configuration uses the service name `discharge_freeze_service`.
+
+| PredBat plan state | Service used from `apps.yaml` |
+|---|---|
+| Freeze Charge | `charge_freeze_service` |
+| Freeze Export | `discharge_freeze_service` |
+| Export | `discharge_start_service` |
+| End Export or Freeze Export | `discharge_stop_service` |
 
 ### Charge freeze
 
@@ -369,7 +376,7 @@ option: "Normal Mode (5)"
 
 The sequence stops conflicting forced modes, selects Normal Mode, sets a bounded Dispatch duration and enables Dispatch. This retains normal self-consumption rather than forcing grid charging.
 
-### Discharge freeze
+### Freeze Export / discharge freeze
 
 Discharge freeze uses:
 
