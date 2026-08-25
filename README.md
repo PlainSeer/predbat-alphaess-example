@@ -100,7 +100,7 @@ After creating them, manually change each helper to a conservative test value wh
 
 Create `script.predbat_alphaess_export_stop_soc` from the bridge example.
 
-The current fix does not apply a fixed +10 offset. While PredBat is exporting, the script reads the percentages shown in the `detail` attribute of `predbat.status` and uses the last percentage as the current export end target. If no live Exporting target can be parsed, it falls back to the `target_soc` passed by PredBat.
+While PredBat is exporting, the script reads the percentages shown in the `detail` attribute of `predbat.status` and uses the last percentage as the current export end target. If no live Exporting target can be parsed, it falls back to the `target_soc` passed by PredBat.
 
 It writes the result to:
 
@@ -114,11 +114,10 @@ Create **PredBat AlphaESS Export SOC Sync** from the bridge example.
 
 When `predbat.status` changes while its state is `Exporting`, the automation reruns the export-target script. This keeps the AlphaESS native stop target aligned after a PredBat replan changes the displayed export endpoint.
 
-This replaces the earlier fixed-offset helper/watchdog arrangement.
 
 ## Merge the AlphaESS block into PredBat
 
-Copy the `pred_bat:` settings from [`apps.yaml`](./apps.yaml) into your normal PredBat configuration. The file intentionally contains only the AlphaESS interface; retain your own tariff, forecast and other normal PredBat settings separately.
+Copy the `pred_bat:` settings from [`apps.yaml`](./apps.yaml) into your normal PredBat configuration. The file contains the reusable, anonymised settings used by the current example, including tariff comparison, LoadML, Solcast and optional standard EV/tariff inputs. It excludes the installation-specific automations and charger-threshold logic.
 
 Review every entity and numerical value, especially:
 
@@ -133,6 +132,77 @@ Review every entity and numerical value, especially:
 - daily energy sensors
 
 The limits in this repository describe one example installation. They are not universal AlphaESS specifications.
+
+## What each `apps.yaml` section does
+
+The example is intentionally a full, anonymised PredBat configuration rather than only an inverter fragment. Remove optional sections only when you understand what consumes them.
+
+### General PredBat settings
+
+- `prefix` controls the Home Assistant entity prefix created by PredBat.
+- `timezone` must match Home Assistant.
+- `currency_symbols` controls display units.
+- `threads` and `forecast_hours` control calculation concurrency and planning horizon.
+- `days_previous` supplies the conventional historic-load comparison input.
+
+### Tariff comparison
+
+`dno_region` and `compare_list` populate PredBat's Compare page with alternative import/export tariffs. They do not replace the live tariff entities used for the active plan.
+
+Product codes and fixed prices become stale. Check every tariff before relying on a comparison.
+
+### LoadML and temperature
+
+`load_ml_enable`, `load_ml_source`, `load_ml_max_days_history`, `load_ml_database_days`, and `temperature_enable` enable the machine-learning load forecast used by the current setup.
+
+These settings depend on good load history. Fix an unreliable `load_today` sensor before tuning LoadML.
+
+### AlphaESS capability declaration
+
+`num_inverters`, `inverter_type`, and the nested `inverter:` mapping tell PredBat which AlphaESS capabilities are available and that control happens through Home Assistant services.
+
+Do not change a capability flag simply because another inverter example uses a different value. The service sequences and freeze behaviour depend on these declarations.
+
+### Control services
+
+- `charge_start_service` and `charge_stop_service` start and stop force charging.
+- `discharge_start_service` and `discharge_stop_service` start and stop force export.
+- `charge_freeze_service` maps PredBat charge freeze to AlphaESS Normal Mode (5).
+- `discharge_freeze_service` maps PredBat discharge freeze to AlphaESS No Battery Charge (19).
+
+Every start sequence first releases conflicting AlphaESS modes. Every stop sequence releases Dispatch so a previous hold is not left behind.
+
+### Live sensors and direction flags
+
+`soc_percent`, `battery_power`, `pv_power`, `load_power`, and `grid_power` provide the current battery and household state. The `*_invert` options correct sign conventions only where proven necessary from live states.
+
+### Daily energy
+
+`load_today`, `import_today`, `export_today`, and `pv_today` provide cumulative daily energy. Replace `sensor.xxxxxx_total_load` with a reliable local entity.
+
+### Battery and inverter limits
+
+The capacity, minimum SoC, maximum rates, inverter limits, scaling and clock-skew settings describe the example installation. Verify every numerical value against the installed inverter, battery, grid connection and export permission.
+
+### Solcast forecast
+
+The four `pv_forecast_*` entries connect PredBat to Home Assistant Solcast forecast entities for today through day four. Replace or remove them if you use a different forecast source.
+
+### Optional EV information
+
+`num_cars`, `car_charging_battery_size`, `car_charging_soc`, and `car_charging_limit` help PredBat estimate the energy required by one EV. The example uses anonymised BottlecapDave Octopus Energy entity placeholders.
+
+No charger-power threshold or custom `car_charging_now` entity is included. Add one only if it is reliable and appropriate for your setup.
+
+### Live tariff entities
+
+`metric_octopus_import`, `metric_octopus_export`, and `metric_standing_charge` read the active rates from Home Assistant. Replace every `xxxxxx` placeholder with the correct entity from your own tariff integration.
+
+`octopus_slot_low_rate`, `octopus_slot_max`, `combine_charge`, and `calculate_export_during_charge` affect how the example treats Intelligent Octopus slots and overlapping charge/export planning. Check these against your tariff and desired behaviour.
+
+### Scaling
+
+`import_export_scaling` applies a final scaling factor to imported/exported energy calculations. The example leaves it at `1.0`.
 
 ## Variable charge and export rates
 
