@@ -260,7 +260,11 @@ pred_bat:
 
 
   # ---------------------------------------------------------------
-  # Discharge Freeze
+  # Freeze Export (PredBat discharge freeze)
+  #
+  # When the PredBat plan shows "Freeze Export", PredBat calls
+  # discharge_freeze_service. When that period ends, it calls
+  # discharge_stop_service.
   #
   # User preference: prevent battery charging, while continuing normal
   # self-consumption. PV supplies the house first; if PV is insufficient
