@@ -166,6 +166,25 @@ AlphaESS inverter
 
 This makes the control sequence visible and testable inside Home Assistant.
 
+## Variable charge and export rates
+
+The current live AlphaESS setup lets PredBat choose the requested power instead of hard-coding one charge and export value in the service sequences:
+
+```yaml
+output_charge_control: "power"
+charge_discharge_with_rate: true
+
+charge_rate:
+  - input_number.predbat_alphaess_charge_rate_w
+
+discharge_rate:
+  - input_number.predbat_alphaess_export_rate_w
+```
+
+The two helpers are generic interface points. They must be created and mapped to the corresponding AlphaESS charge/export power controls for the installation. The start services enable the relevant AlphaESS operating mode; they no longer overwrite PredBat's requested rate with fixed 6 kW or 7 kW values.
+
+This example also uses `inverter_freeze_export_discharge_rate: 240` W for PredBat's low-rate export-freeze behaviour. Check that value and every inverter limit against the actual inverter, battery and grid-export constraints before enabling writes.
+
 ---
 
 # Why both freeze capabilities are enabled
