@@ -416,24 +416,6 @@ pred_bat:
   pv_forecast_d4: sensor.solcast_pv_forecast_forecast_day_4
 
   # ---------------------------------------------------------------
-  # Immersion heater / iBoost model - read-only planning
-  #
-  # Example for a 3 kW switched immersion heater. PredBat is not connected
-  # to a physical switch here; this only models and displays preferred
-  # heating periods. Adjust the daily energy and power limits for your system.
-  # ---------------------------------------------------------------
-
-  iboost_enable: true
-  iboost_solar: false
-  iboost_charging: false
-  iboost_smart: true
-  iboost_max_energy: 4.5
-  iboost_max_power: 3000
-  iboost_min_power: 3000
-  iboost_prevent_discharge: true
-  iboost_on_export: false
-
-  # ---------------------------------------------------------------
   # EV / Intelligent Octopus Go
   #
   # One EV only: Volkswagen ID.3.
