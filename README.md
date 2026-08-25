@@ -4,6 +4,16 @@ This repository is a reusable starting point for connecting PredBat to an AlphaE
 
 It is an example, not a drop-in configuration. Replace every placeholder, verify every entity and limit, and commission in read-only mode before allowing inverter writes.
 
+## Disclaimer — use at your own risk
+
+This repository is provided as an example without warranty or guarantee. You are responsible for deciding whether it is suitable for your equipment, firmware, tariff, electrical installation and local rules.
+
+Incorrect configuration can cause unexpected battery charging or discharging, grid import or export, increased energy costs, breach of export limits, loss of backup reserve, equipment faults, or warranty implications. Neither the repository owner nor its contributors accept responsibility for loss, damage, costs or other consequences arising from its use.
+
+Do not assume the entity names, mode numbers, power limits, battery capacity, minimum SoC, sign conventions or control behaviour are correct for another AlphaESS system. Verify them against live Home Assistant states, the installed inverter and battery, manufacturer information, and any installer/DNO restrictions.
+
+Keep PredBat in Monitor/read-only mode until every sensor and service has been tested with conservative values. Maintain backups and ensure the inverter/BMS native protections remain enabled.
+
 ## What is included
 
 - [`apps.yaml`](./apps.yaml): the reusable PredBat/AlphaESS inverter block
