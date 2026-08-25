@@ -1,0 +1,144 @@
+# Optional Home Assistant package for the reusable PredBat + AlphaESS bridge.
+#
+# Review every entity name and power limit before use. This file is an
+# alternative to creating the same helpers, sensors, script and automations
+# through the UI or separate YAML files. Do not load duplicate definitions.
+#
+# PredBat's apps.yaml remains separate and is not part of this package.
+
+input_number:
+  predbat_alphaess_charge_rate_w:
+    name: PredBat AlphaESS charge rate
+    min: 0
+    max: 8000
+    step: 100
+    unit_of_measurement: W
+    mode: box
+
+  predbat_alphaess_export_rate_w:
+    name: PredBat AlphaESS export rate
+    min: 0
+    max: 8000
+    step: 100
+    unit_of_measurement: W
+    mode: box
+
+sensor:
+  - platform: integration
+    source: sensor.alphaess_inverter_current_house_load
+    name: AlphaESS Inverter PredBat Experimental Modbus House Load Energy
+    unique_id: alphaess_inverter_predbat_experimental_modbus_house_load_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 4
+
+utility_meter:
+  alphaess_inverter_predbat_experimental_modbus_house_load_today:
+    name: AlphaESS Inverter PredBat Experimental Modbus House Load Today
+    unique_id: alphaess_inverter_predbat_experimental_modbus_house_load_today
+    source: sensor.alphaess_inverter_predbat_experimental_modbus_house_load_energy
+    cycle: daily
+    periodically_resetting: true
+    always_available: true
+
+script:
+  predbat_alphaess_export_stop_soc:
+    alias: PredBat AlphaESS Export Stop SOC
+    description: >-
+      Sets the AlphaESS force-export stop SOC to the last percentage shown in
+      PredBat's current Exporting status detail. Handles both two-percentage
+      forms such as 82%-56% and single-target forms such as target 56%. Falls
+      back to PredBat's passed target_soc when no live Exporting target can be
+      parsed.
+    mode: restart
+    fields:
+      target_soc:
+        name: PredBat target SOC
+        description: Fallback SOC supplied by PredBat.
+        selector:
+          number:
+            min: 0
+            max: 100
+            step: 1
+            unit_of_measurement: "%"
+    sequence:
+      - action: number.set_value
+        target:
+          entity_id: number.alphaess_inverter_force_export_stop_at_soc
+        data:
+          value: >-
+            {% set d = state_attr('predbat.status', 'detail') | default('', true) %}
+            {% set vals = d | regex_findall('([0-9]+(?:\\.[0-9]+)?)%') %}
+            {% if is_state('predbat.status', 'Exporting') and vals %}
+              {{ vals | last | float }}
+            {% else %}
+              {{ target_soc | float(0) }}
+            {% endif %}
+
+automation:
+  - id: predbat_alphaess_charge_rate_bridge
+    alias: PredBat AlphaESS Charge Rate Bridge
+    description: >-
+      Convert PredBat's requested charge rate in watts to the AlphaESS Force
+      Charging Power control in kW.
+    triggers:
+      - trigger: state
+        entity_id: input_number.predbat_alphaess_charge_rate_w
+      - trigger: state
+        entity_id: switch.alphaess_inverter_force_charging
+        to: "on"
+    conditions: []
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.alphaess_inverter_force_charging_power
+        data:
+          value: >-
+            {{ (states('input_number.predbat_alphaess_charge_rate_w')
+                | float(0) / 1000) | round(1) }}
+    mode: restart
+
+  - id: predbat_alphaess_export_rate_bridge
+    alias: PredBat AlphaESS Export Rate Bridge
+    description: >-
+      Convert PredBat's requested discharge/export rate in watts to the
+      AlphaESS Force Export Power control in kW.
+    triggers:
+      - trigger: state
+        entity_id: input_number.predbat_alphaess_export_rate_w
+      - trigger: state
+        entity_id: switch.alphaess_inverter_force_export
+        to: "on"
+    conditions: []
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.alphaess_inverter_force_export_power
+        data:
+          value: >-
+            {{ (states('input_number.predbat_alphaess_export_rate_w')
+                | float(0) / 1000) | round(1) }}
+    mode: restart
+
+  - id: predbat_alphaess_export_soc_sync
+    alias: PredBat AlphaESS Export SOC Sync
+    description: >-
+      While PredBat is actively Exporting, rerun the AlphaESS export-stop-SOC
+      script whenever predbat.status changes so AlphaESS tracks the latest
+      displayed export end SOC after replans.
+    triggers:
+      - trigger: state
+        entity_id: predbat.status
+    conditions:
+      - condition: state
+        entity_id: predbat.status
+        state: Exporting
+    actions:
+      - action: script.turn_on
+        target:
+          entity_id: script.predbat_alphaess_export_stop_soc
+        data:
+          variables:
+            target_soc: 0
+    mode: restart

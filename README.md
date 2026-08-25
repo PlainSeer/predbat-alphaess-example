@@ -19,6 +19,7 @@ Keep PredBat in Monitor/read-only mode until every sensor and service has been t
 - [`apps.yaml`](./apps.yaml): the reusable PredBat/AlphaESS inverter block
 - [`home_assistant_alphaess_bridge.example.yaml`](./home_assistant_alphaess_bridge.example.yaml): the two rate helpers, charge/export rate bridges, export-target script and export-target resync automation
 - [`home_assistant_house_load.example.yaml`](./home_assistant_house_load.example.yaml): the Integral and daily Utility Meter sensors used to derive `load_today` from live Modbus house-load power
+- [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml): an optional single-file Home Assistant package combining the reusable helpers, sensors, script and automations
 
 The repository deliberately excludes installation-specific EV, tariff, household-control and notification automations.
 
@@ -59,6 +60,41 @@ Before adding PredBat control, confirm independently in Home Assistant that:
 - force-charge, force-export and Dispatch controls behave as expected.
 
 Do not enable PredBat inverter writes until these checks pass.
+
+## Optional single-file Home Assistant package
+
+If you prefer to keep the reusable Home Assistant-side configuration together, use [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml). It combines:
+
+- the two PredBat rate helpers;
+- the Integral and daily Utility Meter house-load sensors;
+- the export-stop-SoC script;
+- the charge and export rate bridge automations;
+- the export-target resync automation.
+
+This package is an alternative to the UI helpers and the separate example fragments. Do not install both forms with the same entity IDs. Before enabling it, remove or rename any existing duplicates and confirm that no other automation or script depends on the definitions being replaced.
+
+The package deliberately does not include `apps.yaml`, tariff configuration, EV/Hypervolt logic, secrets or installation-specific inverter limits beyond the example helper maximums. Review every AlphaESS entity and change the 8 kW helper maximums when they do not match the safe limits of your inverter, battery or grid connection.
+
+To load one explicit package file, add this under your existing `homeassistant:` section in `configuration.yaml`:
+
+```yaml
+homeassistant:
+  packages:
+    predbat_alphaess: !include home_assistant_predbat_alphaess_package.yaml
+```
+
+Copy the example file into the Home Assistant configuration directory as `home_assistant_predbat_alphaess_package.yaml`. If you already use a packages directory, you may instead place the file there and load it with your existing package include arrangement. Package names must be unique.
+
+Before restarting:
+
+1. Back up the current Home Assistant configuration.
+2. Replace any entity names that differ on your AlphaESS integration.
+3. Decide whether to keep the package or the existing UI/separate-YAML definitions, and remove duplicates.
+4. Run Home Assistant's configuration check.
+5. Restart Home Assistant and confirm every helper, sensor, script and automation loads.
+6. Keep PredBat in Monitor/read-only mode while testing the complete chain.
+
+Home Assistant packages merge several integration configurations into one file, but keyed entities such as helpers must still have unique keys across the main configuration and every package. See the [Home Assistant packages documentation](https://www.home-assistant.io/docs/configuration/packages/).
 
 ## Install the Home Assistant bridge
 
