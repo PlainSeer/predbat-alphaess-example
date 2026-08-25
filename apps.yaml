@@ -2,22 +2,112 @@ pred_bat:
   module: predbat
   class: PredBat
 
-  # Merge this AlphaESS block into your normal PredBat configuration.
+  # ---------------------------------------------------------------
+  # General
+  # ---------------------------------------------------------------
+
   prefix: predbat
   timezone: Europe/London
+
+  currency_symbols:
+    - "£"
+    - "p"
+
+  threads: auto
+  forecast_hours: 48
+
+  days_previous:
+    - 28
+
+  # ---------------------------------------------------------------
+  # Tariff comparison
+  #
+  # Compare:
+  #   1. Intelligent Octopus Go import / Outgoing Fixed export
+  #   2. Intelligent Octopus Go import / Agile Outgoing export
+  #   3. Octopus Flux import / Flux export
+  #
+  # DNO region H = Southern England / SSE.
+  # These comparisons do not change the tariff PredBat uses for normal
+  # operation; they are separate what-if simulations for the Compare page.
+  # ---------------------------------------------------------------
+
+  dno_region: "H"
+
+  compare_list:
+    - id: "igo_fixed"
+      name: "Intelligent GO import / Fixed export"
+      rates_import_octopus_url: "https://api.octopus.energy/v1/products/INTELLI-FIX-12M-25-08-29/electricity-tariffs/E-1R-INTELLI-FIX-12M-25-08-29-{dno_region}/standard-unit-rates/"
+      rates_export_octopus_url: "https://api.octopus.energy/v1/products/OUTGOING-VAR-24-10-26/electricity-tariffs/E-1R-OUTGOING-VAR-24-10-26-{dno_region}/standard-unit-rates/"
+
+    - id: "edf_goelectric"
+      name: "EDF GoElectric 12m v2 / Export Exclusive 15p"
+      rates_import:
+        - start: "23:00:00"
+          end: "06:00:00"
+          rate: 6.99
+
+        - start: "06:00:00"
+          end: "23:00:00"
+          rate: 33.80
+      rates_export:
+        - rate: 15.0
+
+    - id: "eon_nextdrivesmart"
+      name: "Next Drive Smart v7.0 / Next Export Exclusive 13p"
+      rates_import:
+        - start: "00:00:00"
+          end: "06:00:00"
+          rate: 8.00
+
+        - start: "06:00:00"
+          end: "00:00:00"
+          rate: 30.72
+      rates_export:
+        - rate: 13.0
+
+    - id: "igo_agile"
+      name: "Intelligent GO import / Agile export"
+      rates_import_octopus_url: "https://api.octopus.energy/v1/products/INTELLI-FIX-12M-25-08-29/electricity-tariffs/E-1R-INTELLI-FIX-12M-25-08-29-{dno_region}/standard-unit-rates/"
+      rates_export_octopus_url: "https://api.octopus.energy/v1/products/AGILE-OUTGOING-19-05-13/electricity-tariffs/E-1R-AGILE-OUTGOING-19-05-13-{dno_region}/standard-unit-rates/"
+
+    - id: "flux"
+      name: "Octopus Flux import / Flux export"
+      rates_import_octopus_url: "https://api.octopus.energy/v1/products/FLUX-IMPORT-23-02-14/electricity-tariffs/E-1R-FLUX-IMPORT-23-02-14-{dno_region}/standard-unit-rates/"
+      rates_export_octopus_url: "https://api.octopus.energy/v1/products/FLUX-EXPORT-23-02-14/electricity-tariffs/E-1R-FLUX-EXPORT-23-02-14-{dno_region}/standard-unit-rates/"
+
+  # ---------------------------------------------------------------
+  # Load ML prediction
+  #
+  # LoadML replaces the normal days_previous load forecast while
+  # enabled. Temperature forecasting is included as an ML input.
+  # ---------------------------------------------------------------
+
+  load_ml_enable: true
+  load_ml_source: true
+  load_ml_max_days_history: 42
+  load_ml_database_days: 90
+  temperature_enable: true
+
+  # ---------------------------------------------------------------
+  # AlphaESS custom inverter - Modbus only
+  # ---------------------------------------------------------------
 
   num_inverters: 1
   inverter_type: "ALPHAESS_MODBUS"
 
   inverter:
     name: "AlphaESS SMILE-G3 Modbus"
+
     has_rest_api: false
     has_mqtt_api: false
     has_service_api: true
+
     output_charge_control: "power"
     charge_control_immediate: false
     current_dp: 1
     charge_discharge_with_rate: true
+
     has_charge_enable_time: false
     has_discharge_enable_time: false
     has_target_soc: false
@@ -25,176 +115,360 @@ pred_bat:
     has_reserve_soc: false
     has_timed_pause: false
     time_button_press: false
+
     support_charge_freeze: true
     support_discharge_freeze: true
+
     has_ge_inverter_mode: false
     has_fox_inverter_mode: false
     has_idle_time: false
     has_time_window: false
+
     charge_time_format: "S"
     charge_time_entity_is_option: false
     can_span_midnight: true
     clock_time_format: "%Y-%m-%d %H:%M:%S"
+
     num_load_entities: 1
     soc_units: "%"
     write_and_poll_sleep: 2
 
-  # PredBat writes watts to these helpers. The accompanying Home Assistant
-  # bridge automations convert them to the AlphaESS kW control entities.
+  # PredBat writes these helpers to select the requested charge/export
+  # power. Home Assistant automations can map them to the AlphaESS controls.
   charge_rate:
     - input_number.predbat_alphaess_charge_rate_w
 
   discharge_rate:
     - input_number.predbat_alphaess_export_rate_w
 
+  # ---------------------------------------------------------------
+  # AlphaESS Modbus control
+  # ---------------------------------------------------------------
+
   charge_start_service:
+    # Release any active 0 kW Dispatch freeze first
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_export
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_discharging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
+
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_charging_stop_at_soc
       value: "{target_soc}"
+
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_charging_duration
       value: 480
+
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_force_charging_hold
+
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_force_charging
 
-  # Charge freeze maps to AlphaESS Normal Mode (5): no forced grid charge,
-  # with normal self-consumption retained.
+
+  # ---------------------------------------------------------------
+  # Charge Freeze
+  #
+  # User preference: do not force-charge from grid, but continue normal
+  # self-consumption. PV supplies the house first, surplus PV may charge
+  # the battery, and the battery may discharge to cover house demand when
+  # PV is insufficient.
+  #
+  # AlphaESS Dispatch Mode 5 = Normal Mode.
+  # ---------------------------------------------------------------
+
   charge_freeze_service:
+    # Stop all existing forced battery modes first
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging_hold
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_export
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_discharging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
+
     - service: select.select_option
       entity_id: select.alphaess_inverter_dispatch_mode
       option: "Normal Mode (5)"
+
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_duration
       value: 480
+
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_dispatch
+
 
   charge_stop_service:
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging_hold
+
+    # Release any active Charge Freeze / Dispatch hold
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
 
+
   discharge_start_service:
+    # Release any active 0 kW Dispatch freeze first
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging_hold
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_discharging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
+
+    # Use the accompanying script to track the final percentage shown in
+    # predbat.status while Exporting, including after plan recalculations.
     - service: script.predbat_alphaess_export_stop_soc
       target_soc: "{target_soc}"
+
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_export_duration
       value: 480
+
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_force_export
 
-  # Discharge freeze maps to AlphaESS No Battery Charge (19).
+
+  # ---------------------------------------------------------------
+  # Discharge Freeze
+  #
+  # User preference: prevent battery charging, while continuing normal
+  # self-consumption. PV supplies the house first; if PV is insufficient
+  # the battery may discharge to cover house demand. Surplus PV is exported
+  # rather than stored.
+  #
+  # AlphaESS Dispatch Mode 19 = No Battery Charge.
+  # ---------------------------------------------------------------
+
   discharge_freeze_service:
+    # Stop all existing forced battery modes first
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_charging_hold
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_export
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_discharging
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
+
     - service: select.select_option
       entity_id: select.alphaess_inverter_dispatch_mode
       option: "No Battery Charge (19)"
+
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_duration
       value: 480
+
     - service: switch.turn_on
       entity_id: switch.alphaess_inverter_dispatch
+
 
   discharge_stop_service:
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_export
+
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_discharging
+
+    # Release any active Discharge Freeze / Dispatch hold
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_dispatch
 
+
+  # ---------------------------------------------------------------
+  # AlphaESS Modbus battery state
+  # ---------------------------------------------------------------
+
   soc_percent:
     - sensor.alphaess_inverter_battery_state_of_charge
+
   soc_max:
     - 13.68
 
+  # ---------------------------------------------------------------
+  # AlphaESS Modbus live power
+  # ---------------------------------------------------------------
+
   battery_power:
     - sensor.alphaess_inverter_battery_power
+
   battery_power_invert: false
+
   pv_power:
     - sensor.alphaess_inverter_current_pv_production
+
   load_power:
     - sensor.alphaess_inverter_current_house_load
+
   load_power_invert: false
+
   grid_power:
     - sensor.alphaess_inverter_grid_power
+
   grid_power_invert: true
 
-  # Replace any entity that does not exist on your installation.
+  # ---------------------------------------------------------------
+  # AlphaESS Modbus daily energy
+  # ---------------------------------------------------------------
+
   load_today:
     - sensor.xxxxxx_total_load
+
   import_today:
     - sensor.alphaess_inverter_today_s_energy_from_grid
+
   export_today:
     - sensor.alphaess_inverter_today_s_energy_feed_to_grid
+
   pv_today:
     - sensor.alphaess_inverter_today_s_pv_generation
 
+  # PredBat uses a low discharge rate while holding an export freeze.
   inverter_freeze_export_discharge_rate: 240
+
+  # ---------------------------------------------------------------
+  # Battery / inverter characteristics
+  # ---------------------------------------------------------------
+
   battery_rate_max:
     - 8000
+
   inverter_limit:
     - 8000
+
   inverter_limit_charge:
     - 8000
+
   inverter_limit_discharge:
     - 8000
+
   inverter_limit_export:
     - 8000
+
   battery_min_soc:
     - 20
+
   battery_scaling:
     - 1.0
+
   battery_scaling_auto: true
+
   balance_inverters_seconds: 0
+
+  # ---------------------------------------------------------------
+  # Clock skew
+  # ---------------------------------------------------------------
+
   inverter_clock_skew_start: 0
   inverter_clock_skew_end: 0
   inverter_clock_skew_discharge_start: 0
   inverter_clock_skew_discharge_end: 0
   clock_skew: 0
+
+  # ---------------------------------------------------------------
+  # Solcast forecast from Home Assistant
+  # ---------------------------------------------------------------
+
+  pv_forecast_today: sensor.solcast_pv_forecast_forecast_today
+  pv_forecast_tomorrow: sensor.solcast_pv_forecast_forecast_tomorrow
+  pv_forecast_d3: sensor.solcast_pv_forecast_forecast_day_3
+  pv_forecast_d4: sensor.solcast_pv_forecast_forecast_day_4
+
+  # ---------------------------------------------------------------
+  # EV / Intelligent Octopus Go
+  #
+  # One EV only: Volkswagen ID.3.
+  # This prevents PredBat creating a second phantom car/slot.
+  # ---------------------------------------------------------------
+
+  num_cars: 1
+
+  # ---------------------------------------------------------------
+  # Optional EV data. This example deliberately omits car_charging_now:
+  # connect a reliable charger-state entity only if your setup needs it.
+
+  # VW ID.3 battery size (kWh). PredBat requires one decimal place.
+  car_charging_battery_size:
+    - 82.0
+
+  # Current VW ID.3 state of charge and target charge level from
+  # the BottlecapDave Octopus Energy integration. These improve
+  # PredBat's estimate of how much EV charging remains.
+  car_charging_soc:
+    - sensor.octopus_energy_xxxxxx_intelligent_state_of_charge
+
+  car_charging_limit:
+    - number.octopus_energy_xxxxxx_intelligent_charge_target
+
+  # ---------------------------------------------------------------
+  # Octopus Energy - Home Assistant BottlecapDave integration
+  #
+  # PredBat does NOT connect directly to the Octopus API for its normal
+  # live tariff operation.
+  #
+  # Tariff rates and Intelligent Octopus Go information are read
+  # entirely from the BottlecapDave Home Assistant integration.
+  #
+  # The separate compare_list above uses Octopus API URLs only for
+  # PredBat's tariff comparison simulations.
+  # ---------------------------------------------------------------
+
+  metric_octopus_import: sensor.octopus_energy_electricity_xxxxxx_current_rate
+
+  metric_octopus_export: sensor.octopus_energy_electricity_xxxxxx_export_current_rate
+
+  metric_standing_charge: sensor.octopus_energy_electricity_xxxxxx_current_standing_charge
+
+  # ---------------------------------------------------------------
+  # Intelligent Octopus Go handling is installation-specific.
+  # Add the standard PredBat octopus_* fields only when they match your
+  # integration and tariff behaviour.
+
+  octopus_slot_low_rate: false
+  octopus_slot_max: 12
+  combine_charge: true
+  calculate_export_during_charge: false
+
+  # Scaling
+  # ---------------------------------------------------------------
+
+  import_export_scaling: 1.0
