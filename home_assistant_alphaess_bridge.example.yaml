@@ -101,9 +101,10 @@ predbat_alphaess_export_stop_soc:
 - id: predbat_alphaess_export_soc_sync
   alias: PredBat AlphaESS Export SOC Sync
   description: >-
-    While PredBat is actively Exporting, rerun the AlphaESS export-stop-SOC
-    script whenever predbat.status changes so AlphaESS tracks the latest
-    displayed export end SOC after replans.
+    While PredBat is actively Exporting, update AlphaESS's export-stop SoC
+    after replans. Once the Modbus write has settled, recover Force Export
+    only when its physical switch is off and battery SoC is more than one
+    percentage point above the configured stop target.
   triggers:
     - trigger: state
       entity_id: predbat.status
@@ -118,4 +119,28 @@ predbat_alphaess_export_stop_soc:
       data:
         variables:
           target_soc: 0
+
+    - delay: "00:00:01"
+
+    - if:
+        - condition: state
+          entity_id: predbat.status
+          state: Exporting
+        - condition: state
+          entity_id: switch.alphaess_inverter_force_export
+          state: "off"
+        - condition: template
+          value_template: >-
+            {{ states('sensor.alphaess_inverter_battery_state_of_charge')
+                 not in ['unknown', 'unavailable']
+               and states('number.alphaess_inverter_force_export_stop_at_soc')
+                 not in ['unknown', 'unavailable']
+               and states('sensor.alphaess_inverter_battery_state_of_charge')
+                 | float
+                 > (states('number.alphaess_inverter_force_export_stop_at_soc')
+                    | float + 1) }}
+      then:
+        - action: switch.turn_on
+          target:
+            entity_id: switch.alphaess_inverter_force_export
   mode: restart

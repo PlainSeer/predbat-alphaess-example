@@ -177,11 +177,35 @@ The script deliberately centralises this parsing and fallback logic instead of e
 
 Because the script depends on the current `predbat.status` detail format, test it after PredBat upgrades and confirm that the last displayed percentage still represents the desired export endpoint.
 
-### 4. Create the export-target resync automation
+### 4. Create the guarded export-target resync automation
 
-Create **PredBat AlphaESS Export SOC Sync** from the bridge example.
+Create **PredBat AlphaESS Export SOC Sync** from the existing bridge example,
+or use the updated all-in-one Home Assistant package if you prefer a single
+configuration file.
 
-The script solves how to calculate and write the correct target, but a separate trigger is still required after a replan. When `predbat.status` changes while its state is `Exporting`, the resync automation reruns the script.
+The script calculates and writes the current export endpoint, while the
+automation also closes a physical-state feedback gap. AlphaESS can reject or
+auto-stop Force Export when PredBat attempts to start it while an older,
+higher stop-at-SoC value is still active. PredBat may nevertheless remain
+logically `Exporting`, then publish the new lower target without issuing
+another export-start command.
+
+After every `predbat.status` update that remains in `Exporting`, the
+automation therefore:
+
+1. reruns the export-stop-SoC script;
+2. waits one second for the AlphaESS Modbus write to settle;
+3. confirms PredBat is still `Exporting`;
+4. checks that the real AlphaESS Force Export switch is `off`;
+5. confirms actual battery SoC is more than one percentage point above the
+   configured stop target; and
+6. turns Force Export back on only when all checks pass.
+
+The one-percentage-point guard is important. The AlphaESS integration may
+legitimately auto-stop Force Export approximately 1% above the configured
+target. At that normal endpoint, the strict comparison
+`battery SoC > stop target + 1` is false, so the automation does not fight the
+inverter. Unknown or unavailable SoC/target readings also prevent a restart.
 
 The resulting flow is:
 
@@ -192,12 +216,26 @@ PredBat starts export
 
 PredBat replans while still Exporting
     → predbat.status changes
-    → resync automation calls the same script
-    → AlphaESS stop SoC follows the new endpoint
+    → resync automation writes the new stop SoC
+    → waits one second
+    → if physical Force Export is unexpectedly off and SoC > target + 1%
+      → turn Force Export back on
 ```
 
-The automation is limited to the `Exporting` state, so ordinary PredBat status changes do not continually write the AlphaESS control.
+Replace `sensor.alphaess_inverter_battery_state_of_charge` if your Modbus
+integration exposes battery SoC under another entity ID. Do not substitute a
+cloud-delayed SoC entity without testing its update timing.
 
+After installation, reload scripts and automations (or restart Home Assistant),
+then verify:
+
+- the automation and script load without errors;
+- a PredBat replan changes the AlphaESS stop-at-SoC to the last percentage in
+  `predbat.status` detail;
+- an already-on Force Export switch is left untouched;
+- an off switch is restarted only while PredBat is still `Exporting` and SoC
+  is strictly above the target plus 1%; and
+- the switch remains off at the legitimate end target.
 
 ## Create the Modbus-derived daily house-load sensor
 
