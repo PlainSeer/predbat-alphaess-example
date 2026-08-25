@@ -69,6 +69,19 @@ PredBat expresses charge and discharge rates in watts. The AlphaESS power contro
 - `input_number.predbat_alphaess_charge_rate_w`
 - `input_number.predbat_alphaess_export_rate_w`
 
+The helpers are needed because PredBat's inverter interface expects writable rate entities in its own units, while the AlphaESS integration exposes separate power controls with different units and operating switches. PredBat cannot safely use those AlphaESS number entities as direct drop-in replacements.
+
+The helpers provide a stable boundary between the two systems:
+
+```text
+PredBat requested rate (W)
+    → Home Assistant helper (W)
+    → bridge automation converts W to kW
+    → AlphaESS power number (kW)
+```
+
+This separation also makes the requested value visible in Home Assistant, allows safe range limits to be applied, and lets the bridge resend the value when force charge/export starts. Resending matters because a mode change or another AlphaESS action may have changed the inverter power control since PredBat last updated its requested rate.
+
 Recommended UI method:
 
 1. Open **Settings → Devices & services → Helpers**.
@@ -110,19 +123,42 @@ After creating them, manually change each helper to a conservative test value wh
 
 Create `script.predbat_alphaess_export_stop_soc` from the bridge example.
 
-While PredBat is exporting, the script reads the percentages shown in the `detail` attribute of `predbat.status` and uses the last percentage as the current export end target. If no live Exporting target can be parsed, it falls back to the `target_soc` passed by PredBat.
+#### Why the script is needed
 
-It writes the result to:
+AlphaESS Force Export has a native stop-at-SoC number. PredBat, however, can recalculate an active export plan and change the intended export endpoint after force export has already started. A direct `number.set_value` in `discharge_start_service` would normally write only the target supplied at that start event; it would not independently track later replans.
+
+On the live system, the current endpoint is shown in the `detail` attribute of `predbat.status`. The detail can contain a range such as `82%-56%` or a single target. The final percentage is the intended export end SoC, so the script extracts the last percentage and writes it to:
 
 ```text
 number.alphaess_inverter_force_export_stop_at_soc
 ```
 
+If PredBat is not currently Exporting, or the detail contains no usable percentage, the script falls back to the `target_soc` passed by PredBat. This fallback means the initial start call still has a valid target.
+
+The script deliberately centralises this parsing and fallback logic instead of embedding a long template in `apps.yaml`. It can be tested independently in Home Assistant and called again whenever the plan changes.
+
+Because the script depends on the current `predbat.status` detail format, test it after PredBat upgrades and confirm that the last displayed percentage still represents the desired export endpoint.
+
 ### 4. Create the export-target resync automation
 
 Create **PredBat AlphaESS Export SOC Sync** from the bridge example.
 
-When `predbat.status` changes while its state is `Exporting`, the automation reruns the export-target script. This keeps the AlphaESS native stop target aligned after a PredBat replan changes the displayed export endpoint.
+The script solves how to calculate and write the correct target, but a separate trigger is still required after a replan. When `predbat.status` changes while its state is `Exporting`, the resync automation reruns the script.
+
+The resulting flow is:
+
+```text
+PredBat starts export
+    → apps.yaml calls export-target script
+    → AlphaESS receives the native stop SoC
+
+PredBat replans while still Exporting
+    → predbat.status changes
+    → resync automation calls the same script
+    → AlphaESS stop SoC follows the new endpoint
+```
+
+The automation is limited to the `Exporting` state, so ordinary PredBat status changes do not continually write the AlphaESS control.
 
 
 ## Merge the AlphaESS block into PredBat
