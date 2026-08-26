@@ -246,11 +246,10 @@ pred_bat:
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
 
-    # PredBat supplies the planned end SoC directly. For example, an export
-    # shown as 55% -> 45% sets the AlphaESS stop target to 45%.
-    - service: number.set_value
-      entity_id: number.alphaess_inverter_force_discharging_stop_at_soc
-      value: "{target_soc}"
+    # The accompanying script uses the final percentage displayed by PredBat
+    # while Exporting and falls back to this supplied value during start-up.
+    - service: script.predbat_alphaess_export_stop_soc
+      target_soc: "{target_soc}"
 
     - service: number.set_value
       entity_id: number.alphaess_inverter_force_discharging_duration

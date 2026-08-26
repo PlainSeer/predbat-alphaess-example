@@ -17,9 +17,9 @@ Keep PredBat in Monitor/read-only mode until every sensor and service has been t
 ## What is included
 
 - [`apps.yaml`](./apps.yaml): the reusable PredBat/AlphaESS inverter block
-- [`home_assistant_alphaess_bridge.example.yaml`](./home_assistant_alphaess_bridge.example.yaml): the two rate helpers and charge/discharge rate bridges
+- [`home_assistant_alphaess_bridge.example.yaml`](./home_assistant_alphaess_bridge.example.yaml): the two rate helpers, charge/discharge rate bridges, discharge-target script and target-sync automation
 - [`home_assistant_house_load.example.yaml`](./home_assistant_house_load.example.yaml): the Integral and daily Utility Meter sensors used to derive `load_today` from live Modbus house-load power
-- [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml): an optional single-file Home Assistant package combining the reusable helpers, sensors and automations
+- [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml): an optional single-file Home Assistant package combining the reusable helpers, sensors, script and automations
 
 The repository deliberately excludes installation-specific EV, tariff, household-control and notification automations.
 
@@ -67,7 +67,8 @@ If you prefer to keep the reusable Home Assistant-side configuration together, u
 
 - the two PredBat rate helpers;
 - the Integral and daily Utility Meter house-load sensors;
-- the charge and discharge rate bridge automations.
+- the charge and discharge rate bridge automations;
+- the Force Discharging stop-SOC script and target-sync automation.
 
 This package is an alternative to the UI helpers and the separate example fragments. Do not install both forms with the same entity IDs. Before enabling it, remove or rename any existing duplicates and confirm that no other automation or script depends on the definitions being replaced.
 
@@ -159,13 +160,15 @@ After creating them, manually change each helper to a conservative test value wh
 
 PredBat's `discharge_rate` is a requested battery discharge rate in watts. AlphaESS Force Export instead treats its power setting as a desired grid-export rate and continually compensates for house load and PV. This example therefore uses AlphaESS Force Discharging so the battery-side power request matches PredBat's planning model.
 
-`discharge_start_service` writes PredBat's `{target_soc}` directly to:
+The `{target_soc}` supplied to `discharge_start_service` is an internal control limit and can differ from the endpoint displayed in PredBat's status. The start service therefore calls `script.predbat_alphaess_export_stop_soc`. While PredBat is Exporting, the script extracts the final percentage displayed in `predbat.status` and writes it to:
 
 ```text
 number.alphaess_inverter_force_discharging_stop_at_soc
 ```
 
-It then sets a bounded duration and enables `switch.alphaess_inverter_force_discharging`. There is no percentage offset: if PredBat displays an export from 55% to 45%, AlphaESS is set to stop at 45%.
+If the live endpoint is not yet available during start-up, the script temporarily falls back to `{target_soc}`. The target-sync automation runs whenever `predbat.status` updates, replacing that fallback with the displayed endpoint and following later replans. It only writes the stop target; it never starts or restarts a forced mode.
+
+The start service then sets a bounded duration and enables `switch.alphaess_inverter_force_discharging`. There is no percentage offset: if PredBat displays an export from 55% to 45%, AlphaESS is set to stop at 45%.
 
 Test with a short, conservative export while watching battery power, grid power, house load and PV. Battery power should follow PredBat's requested discharge rate; grid export will be the remaining power after the house load is supplied and PV is included. Confirm the forced mode stops at the target SoC and that PredBat's stop service turns it off.
 
@@ -173,7 +176,7 @@ Test with a short, conservative export while watching battery power, grid power,
 
 If you installed an earlier version of this repository, update both `apps.yaml` and the Home Assistant discharge-rate bridge. The bridge keeps the existing `predbat_alphaess_export_rate_bridge` automation ID and `input_number.predbat_alphaess_export_rate_w` helper ID to avoid creating duplicates, but now targets the Force Discharging controls.
 
-The former `script.predbat_alphaess_export_stop_soc` and **PredBat AlphaESS Export SOC Sync** automation are no longer used. Disable the old sync automation before enabling the updated setup; once the new path is working, the unused script and automation can be removed. Do not leave the old sync automation enabled because it controls Force Export independently of the new Force Discharging path.
+Update the existing stop-SOC script and sync automation rather than creating duplicates. Their entity IDs are retained, but both now target Force Discharging. The old delay and Force Export restart action must be removed: the revised automation only keeps the Force Discharging stop target aligned with PredBat.
 
 ## Create the Modbus-derived daily house-load sensor
 
@@ -329,7 +332,7 @@ The start services enable the required AlphaESS operating mode. They do not over
 
 Before starting a new charge or discharge operation, the example turns off an active Dispatch hold and conflicting forced modes. This prevents an earlier freeze state from blocking the new request.
 
-The discharge sequence writes PredBat's target SoC directly to AlphaESS, sets a bounded Force Discharging duration, and enables Force Discharging.
+The discharge sequence calls the target script, sets a bounded Force Discharging duration, and enables Force Discharging. Subsequent PredBat status updates resynchronise the displayed endpoint.
 
 ## Freeze mappings
 
@@ -397,7 +400,7 @@ Set the `*_invert` flags only after observing the live direction conventions. Us
 
 1. Back up the existing PredBat and Home Assistant configuration.
 2. Create the house-load Integral and daily Utility Meter sensors if your integration does not already provide a reliable `load_today` entity.
-3. Create the two rate helpers and two rate bridges.
+3. Create the two rate helpers, two rate bridges, discharge-target script and target-sync automation.
 4. Reload or restart Home Assistant and confirm the new entities load.
 5. Test the house-load sensor chain and helper-to-AlphaESS conversions with conservative values.
 6. Add the customised AlphaESS block with PredBat in Monitor/read-only mode.
@@ -405,7 +408,7 @@ Set the `*_invert` flags only after observing the live direction conventions. Us
 8. Check battery capacity, minimum SoC and every power limit.
 9. Verify charge freeze and discharge freeze start and clear correctly.
 10. Verify a new charge/discharge operation clears a previous Dispatch hold.
-11. During a short controlled export, confirm battery power follows PredBat's requested discharge rate and AlphaESS receives PredBat's target SoC directly.
+11. During a short controlled export, confirm battery power follows PredBat's requested discharge rate and AlphaESS receives the final percentage displayed by PredBat.
 12. Confirm the discharge stop service turns Force Discharging off.
 13. Review PredBat and Home Assistant logs.
 14. Enable writes only after every check passes.
@@ -426,7 +429,7 @@ Check for a remaining Dispatch or conflicting forced mode. The start sequence sh
 
 ### Export stops at the wrong SoC
 
-Check that `discharge_start_service` writes `{target_soc}` directly to `number.alphaess_inverter_force_discharging_stop_at_soc`, with no added margin. Also confirm that the entity accepts the value and the inverter is using Force Discharging rather than Force Export.
+Check that the target-sync automation is enabled, `predbat.status` is `Exporting`, and its `detail` attribute contains a percentage. Confirm the script writes the final displayed percentage to `number.alphaess_inverter_force_discharging_stop_at_soc` and that the inverter is using Force Discharging rather than Force Export.
 
 ### Power direction is wrong
 

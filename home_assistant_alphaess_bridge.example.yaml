@@ -20,6 +20,38 @@ input_number:
     unit_of_measurement: W
     mode: box
 
+# Add this keyed definition to scripts.yaml, or create the equivalent UI script.
+predbat_alphaess_export_stop_soc:
+  alias: PredBat AlphaESS Discharge Stop SOC
+  description: >-
+    Sets the AlphaESS Force Discharging stop SOC to the final percentage shown
+    in PredBat's current Exporting status detail. Falls back to PredBat's
+    passed target_soc when no live Exporting endpoint can be parsed.
+  mode: restart
+  fields:
+    target_soc:
+      name: PredBat target SOC
+      description: Fallback SOC supplied by PredBat.
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.alphaess_inverter_force_discharging_stop_at_soc
+      data:
+        value: >-
+          {% set d = state_attr('predbat.status', 'detail') | default('', true) %}
+          {% set vals = d | regex_findall('([0-9]+(?:\\.[0-9]+)?)%') %}
+          {% if is_state('predbat.status', 'Exporting') and vals %}
+            {{ vals | last | float }}
+          {% else %}
+            {{ target_soc | float(0) }}
+          {% endif %}
+
 # Add these list entries to automations.yaml, or create equivalent UI automations.
 - id: predbat_alphaess_charge_rate_bridge
   alias: PredBat AlphaESS Charge Rate Bridge
@@ -63,4 +95,32 @@ input_number:
         value: >-
           {{ (states('input_number.predbat_alphaess_export_rate_w')
               | float(0) / 1000) | round(1) }}
+  mode: restart
+
+- id: predbat_alphaess_export_soc_sync
+  alias: PredBat AlphaESS Discharge SOC Sync
+  description: >-
+    While PredBat is Exporting, keep the AlphaESS Force Discharging stop SOC
+    aligned with the final percentage in predbat.status. Does not start or
+    restart a forced mode.
+  triggers:
+    - trigger: state
+      entity_id: predbat.status
+  conditions:
+    - condition: state
+      entity_id: predbat.status
+      state: Exporting
+    - condition: template
+      value_template: >-
+        {{ (state_attr('predbat.status', 'detail') | default('', true)
+             | regex_findall('([0-9]+(?:\\.[0-9]+)?)%') | count) > 0 }}
+  actions:
+    - action: script.turn_on
+      target:
+        entity_id: script.predbat_alphaess_export_stop_soc
+      data:
+        variables:
+          target_soc: >-
+            {{ states('number.alphaess_inverter_force_discharging_stop_at_soc')
+               | float(0) }}
   mode: restart
