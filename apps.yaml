@@ -241,22 +241,23 @@ pred_bat:
       entity_id: switch.alphaess_inverter_force_charging_hold
 
     - service: switch.turn_off
-      entity_id: switch.alphaess_inverter_force_discharging
+      entity_id: switch.alphaess_inverter_force_export
 
     - service: switch.turn_off
       entity_id: switch.alphaess_inverter_force_import
 
-    # Use the accompanying script to track the final percentage shown in
-    # predbat.status while Exporting, including after plan recalculations.
-    - service: script.predbat_alphaess_export_stop_soc
-      target_soc: "{target_soc}"
+    # PredBat supplies the planned end SoC directly. For example, an export
+    # shown as 55% -> 45% sets the AlphaESS stop target to 45%.
+    - service: number.set_value
+      entity_id: number.alphaess_inverter_force_discharging_stop_at_soc
+      value: "{target_soc}"
 
     - service: number.set_value
-      entity_id: number.alphaess_inverter_force_export_duration
+      entity_id: number.alphaess_inverter_force_discharging_duration
       value: 480
 
     - service: switch.turn_on
-      entity_id: switch.alphaess_inverter_force_export
+      entity_id: switch.alphaess_inverter_force_discharging
 
 
   # ---------------------------------------------------------------

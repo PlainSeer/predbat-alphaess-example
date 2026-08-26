@@ -17,9 +17,9 @@ Keep PredBat in Monitor/read-only mode until every sensor and service has been t
 ## What is included
 
 - [`apps.yaml`](./apps.yaml): the reusable PredBat/AlphaESS inverter block
-- [`home_assistant_alphaess_bridge.example.yaml`](./home_assistant_alphaess_bridge.example.yaml): the two rate helpers, charge/export rate bridges, export-target script and export-target resync automation
+- [`home_assistant_alphaess_bridge.example.yaml`](./home_assistant_alphaess_bridge.example.yaml): the two rate helpers and charge/discharge rate bridges
 - [`home_assistant_house_load.example.yaml`](./home_assistant_house_load.example.yaml): the Integral and daily Utility Meter sensors used to derive `load_today` from live Modbus house-load power
-- [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml): an optional single-file Home Assistant package combining the reusable helpers, sensors, script and automations
+- [`home_assistant_predbat_alphaess_package.example.yaml`](./home_assistant_predbat_alphaess_package.example.yaml): an optional single-file Home Assistant package combining the reusable helpers, sensors and automations
 
 The repository deliberately excludes installation-specific EV, tariff, household-control and notification automations.
 
@@ -28,7 +28,7 @@ The repository deliberately excludes installation-specific EV, tariff, household
 - Home Assistant with a working AlphaESS Modbus integration
 - PredBat
 - AlphaESS entities for battery SoC, battery/PV/load/grid power and daily energy
-- AlphaESS controls for force charging, force export and Dispatch
+- AlphaESS controls for Force Charging, Force Discharging and Dispatch
 - the Home Assistant helpers and bridge automations described below
 - an incrementing daily house-load energy sensor, either supplied by your integration or created from the included example
 
@@ -57,7 +57,7 @@ Before adding PredBat control, confirm independently in Home Assistant that:
 - grid import and export have the expected sign;
 - PV and house-load power are plausible;
 - daily import, export, PV and load sensors reset and accumulate correctly;
-- force-charge, force-export and Dispatch controls behave as expected.
+- Force Charging, Force Discharging and Dispatch controls behave as expected.
 
 Do not enable PredBat inverter writes until these checks pass.
 
@@ -67,9 +67,7 @@ If you prefer to keep the reusable Home Assistant-side configuration together, u
 
 - the two PredBat rate helpers;
 - the Integral and daily Utility Meter house-load sensors;
-- the export-stop-SoC script;
-- the charge and export rate bridge automations;
-- the export-target resync automation.
+- the charge and discharge rate bridge automations.
 
 This package is an alternative to the UI helpers and the separate example fragments. Do not install both forms with the same entity IDs. Before enabling it, remove or rename any existing duplicates and confirm that no other automation or script depends on the definitions being replaced.
 
@@ -118,7 +116,7 @@ PredBat requested rate (W)
     → AlphaESS power number (kW)
 ```
 
-This separation also makes the requested value visible in Home Assistant, allows safe range limits to be applied, and lets the bridge resend the value when force charge/export starts. Resending matters because a mode change or another AlphaESS action may have changed the inverter power control since PredBat last updated its requested rate.
+This separation also makes the requested value visible in Home Assistant, allows safe range limits to be applied, and lets the bridge resend the value when Force Charging or Force Discharging starts. Resending matters because a mode change or another AlphaESS action may have changed the inverter power control since PredBat last updated its requested rate.
 
 Recommended UI method:
 
@@ -137,7 +135,7 @@ If you manage helpers in YAML, copy only the `input_number:` section from the br
 Create the two automations from the bridge example:
 
 - **PredBat AlphaESS Charge Rate Bridge**
-- **PredBat AlphaESS Export Rate Bridge**
+- **PredBat AlphaESS Discharge Rate Bridge**
 
 The charge bridge converts watts to kilowatts and writes:
 
@@ -146,103 +144,36 @@ input_number.predbat_alphaess_charge_rate_w
     → number.alphaess_inverter_force_charging_power
 ```
 
-The export bridge converts watts to kilowatts and writes:
+The discharge bridge converts watts to kilowatts and writes:
 
 ```text
 input_number.predbat_alphaess_export_rate_w
-    → number.alphaess_inverter_force_export_power
+    → number.alphaess_inverter_force_discharging_power
 ```
 
-Each automation runs when its helper changes and again when the associated forced mode starts. This ensures the AlphaESS control receives the latest PredBat rate.
+Each automation runs when its helper changes and again when the associated forced mode starts. This ensures the AlphaESS control receives the latest PredBat rate. The helper retains its historical `export_rate` name because it is the entity configured as PredBat's `discharge_rate`.
 
 After creating them, manually change each helper to a conservative test value while the associated forced mode is off. Confirm the matching AlphaESS power number receives the expected kW value—for example, `1000 W → 1.0 kW`.
 
-### 3. Create the export-target script
+### 3. Verify Force Discharging control
 
-Create `script.predbat_alphaess_export_stop_soc` from the bridge example.
+PredBat's `discharge_rate` is a requested battery discharge rate in watts. AlphaESS Force Export instead treats its power setting as a desired grid-export rate and continually compensates for house load and PV. This example therefore uses AlphaESS Force Discharging so the battery-side power request matches PredBat's planning model.
 
-#### Why the script is needed
-
-AlphaESS Force Export has a native stop-at-SoC number. PredBat, however, can recalculate an active export plan and change the intended export endpoint after force export has already started. A direct `number.set_value` in `discharge_start_service` would normally write only the target supplied at that start event; it would not independently track later replans.
-
-On the live system, the current endpoint is shown in the `detail` attribute of `predbat.status`. The detail can contain a range such as `82%-56%` or a single target. The final percentage is the intended export end SoC, so the script extracts the last percentage and writes it to:
+`discharge_start_service` writes PredBat's `{target_soc}` directly to:
 
 ```text
-number.alphaess_inverter_force_export_stop_at_soc
+number.alphaess_inverter_force_discharging_stop_at_soc
 ```
 
-If PredBat is not currently Exporting, or the detail contains no usable percentage, the script falls back to the `target_soc` passed by PredBat. This fallback means the initial start call still has a valid target.
+It then sets a bounded duration and enables `switch.alphaess_inverter_force_discharging`. There is no percentage offset: if PredBat displays an export from 55% to 45%, AlphaESS is set to stop at 45%.
 
-The script deliberately centralises this parsing and fallback logic instead of embedding a long template in `apps.yaml`. It can be tested independently in Home Assistant and called again whenever the plan changes.
+Test with a short, conservative export while watching battery power, grid power, house load and PV. Battery power should follow PredBat's requested discharge rate; grid export will be the remaining power after the house load is supplied and PV is included. Confirm the forced mode stops at the target SoC and that PredBat's stop service turns it off.
 
-Because the script depends on the current `predbat.status` detail format, test it after PredBat upgrades and confirm that the last displayed percentage still represents the desired export endpoint.
+### Migrating from the earlier Force Export example
 
-### 4. Create the guarded export-target resync automation
+If you installed an earlier version of this repository, update both `apps.yaml` and the Home Assistant discharge-rate bridge. The bridge keeps the existing `predbat_alphaess_export_rate_bridge` automation ID and `input_number.predbat_alphaess_export_rate_w` helper ID to avoid creating duplicates, but now targets the Force Discharging controls.
 
-Create **PredBat AlphaESS Export SOC Sync** from the existing bridge example,
-or use the updated all-in-one Home Assistant package if you prefer a single
-configuration file.
-
-The script calculates and writes the current export endpoint, while the
-automation also closes a physical-state feedback gap. AlphaESS can reject or
-auto-stop Force Export when PredBat attempts to start it while an older,
-higher stop-at-SoC value is still active. PredBat may nevertheless remain
-logically `Exporting`, then publish the new lower target without issuing
-another export-start command.
-
-After every `predbat.status` update that remains in `Exporting`, the
-automation therefore:
-
-1. confirms the status detail still contains a parseable percentage;
-2. reruns the export-stop-SoC script, using the current AlphaESS stop target
-   instead of an arbitrary zero as its race-condition fallback;
-3. waits one second for the AlphaESS Modbus write to settle;
-4. confirms PredBat is still `Exporting`;
-5. checks that the real AlphaESS Force Export switch is `off`;
-6. confirms actual battery SoC is more than one percentage point above the
-   configured stop target; and
-7. turns Force Export back on only when all checks pass.
-
-If the detail format cannot be parsed, the automation stops before any action:
-it preserves the existing AlphaESS target and does not restart Force Export.
-The direct export-start call in `apps.yaml` is unchanged and still supplies
-PredBat's genuine `{target_soc}` to the script.
-
-The one-percentage-point guard is important. The AlphaESS integration may
-legitimately auto-stop Force Export approximately 1% above the configured
-target. At that normal endpoint, the strict comparison
-`battery SoC > stop target + 1` is false, so the automation does not fight the
-inverter. Unknown or unavailable SoC/target readings also prevent a restart, and an unparseable PredBat detail prevents both the target write and restart.
-
-The resulting flow is:
-
-```text
-PredBat starts export
-    → apps.yaml calls export-target script
-    → AlphaESS receives the native stop SoC
-
-PredBat replans while still Exporting
-    → predbat.status changes
-    → resync automation writes the new stop SoC
-    → waits one second
-    → if physical Force Export is unexpectedly off and SoC > target + 1%
-      → turn Force Export back on
-```
-
-Replace `sensor.alphaess_inverter_battery_state_of_charge` if your Modbus
-integration exposes battery SoC under another entity ID. Do not substitute a
-cloud-delayed SoC entity without testing its update timing.
-
-After installation, reload scripts and automations (or restart Home Assistant),
-then verify:
-
-- the automation and script load without errors;
-- a PredBat replan changes the AlphaESS stop-at-SoC to the last percentage in
-  `predbat.status` detail;
-- an already-on Force Export switch is left untouched;
-- an off switch is restarted only while PredBat is still `Exporting` and SoC
-  is strictly above the target plus 1%; and
-- the switch remains off at the legitimate end target.
+The former `script.predbat_alphaess_export_stop_soc` and **PredBat AlphaESS Export SOC Sync** automation are no longer used. Disable the old sync automation before enabling the updated setup; once the new path is working, the unused script and automation can be removed. Do not leave the old sync automation enabled because it controls Force Export independently of the new Force Discharging path.
 
 ## Create the Modbus-derived daily house-load sensor
 
@@ -331,7 +262,7 @@ Do not change a capability flag simply because another inverter example uses a d
 ### Control services
 
 - `charge_start_service` and `charge_stop_service` start and stop force charging.
-- `discharge_start_service` and `discharge_stop_service` start and stop force export.
+- `discharge_start_service` and `discharge_stop_service` start and stop Force Discharging.
 - `charge_freeze_service` maps PredBat charge freeze to AlphaESS Normal Mode (5).
 - `discharge_freeze_service` maps PredBat discharge freeze to AlphaESS No Battery Charge (19).
 
@@ -377,7 +308,7 @@ The Axle example reads its API key from `!secret axle_api_key`. Add the real val
 
 `import_export_scaling` applies a final scaling factor to imported/exported energy calculations. The example leaves it at `1.0`.
 
-## Variable charge and export rates
+## Variable charge and discharge rates
 
 The PredBat interface is:
 
@@ -394,11 +325,11 @@ discharge_rate:
 
 The start services enable the required AlphaESS operating mode. They do not overwrite PredBat's requested rate with a fixed power value.
 
-## Charge and export sequences
+## Charge and discharge sequences
 
-Before starting a new charge or export operation, the example turns off an active Dispatch hold and conflicting forced modes. This prevents an earlier freeze state from blocking the new request.
+Before starting a new charge or discharge operation, the example turns off an active Dispatch hold and conflicting forced modes. This prevents an earlier freeze state from blocking the new request.
 
-The export sequence calls `script.predbat_alphaess_export_stop_soc`, sets a bounded force-export duration, and enables force export.
+The discharge sequence writes PredBat's target SoC directly to AlphaESS, sets a bounded Force Discharging duration, and enables Force Discharging.
 
 ## Freeze mappings
 
@@ -466,17 +397,18 @@ Set the `*_invert` flags only after observing the live direction conventions. Us
 
 1. Back up the existing PredBat and Home Assistant configuration.
 2. Create the house-load Integral and daily Utility Meter sensors if your integration does not already provide a reliable `load_today` entity.
-3. Create the two rate helpers, two rate bridges, export-target script and resync automation.
+3. Create the two rate helpers and two rate bridges.
 4. Reload or restart Home Assistant and confirm the new entities load.
 5. Test the house-load sensor chain and helper-to-AlphaESS conversions with conservative values.
 6. Add the customised AlphaESS block with PredBat in Monitor/read-only mode.
 7. Check all live power directions and daily totals.
 8. Check battery capacity, minimum SoC and every power limit.
 9. Verify charge freeze and discharge freeze start and clear correctly.
-10. Verify a new charge/export operation clears a previous Dispatch hold.
-11. During a controlled export, confirm the AlphaESS stop SoC tracks the final percentage in `predbat.status` detail, including after replans.
-12. Review PredBat and Home Assistant logs.
-13. Enable writes only after every check passes.
+10. Verify a new charge/discharge operation clears a previous Dispatch hold.
+11. During a short controlled export, confirm battery power follows PredBat's requested discharge rate and AlphaESS receives PredBat's target SoC directly.
+12. Confirm the discharge stop service turns Force Discharging off.
+13. Review PredBat and Home Assistant logs.
+14. Enable writes only after every check passes.
 
 ## Troubleshooting
 
@@ -492,14 +424,9 @@ Check that the relevant stop service turns off `switch.alphaess_inverter_dispatc
 
 Check for a remaining Dispatch or conflicting forced mode. The start sequence should turn those modes off first.
 
-### Export stop SoC does not follow a replan
+### Export stops at the wrong SoC
 
-Check:
-
-- `predbat.status` is `Exporting`;
-- its `detail` attribute contains one or more percentages;
-- the resync automation is enabled;
-- the script can write `number.alphaess_inverter_force_export_stop_at_soc`.
+Check that `discharge_start_service` writes `{target_soc}` directly to `number.alphaess_inverter_force_discharging_stop_at_soc`, with no added margin. Also confirm that the entity accepts the value and the inverter is using Force Discharging rather than Force Export.
 
 ### Power direction is wrong
 

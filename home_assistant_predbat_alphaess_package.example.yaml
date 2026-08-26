@@ -42,40 +42,6 @@ utility_meter:
     periodically_resetting: true
     always_available: true
 
-script:
-  predbat_alphaess_export_stop_soc:
-    alias: PredBat AlphaESS Export Stop SOC
-    description: >-
-      Sets the AlphaESS force-export stop SOC to the last percentage shown in
-      PredBat's current Exporting status detail. Handles both two-percentage
-      forms such as 82%-56% and single-target forms such as target 56%. Falls
-      back to PredBat's passed target_soc when no live Exporting target can be
-      parsed.
-    mode: restart
-    fields:
-      target_soc:
-        name: PredBat target SOC
-        description: Fallback SOC supplied by PredBat.
-        selector:
-          number:
-            min: 0
-            max: 100
-            step: 1
-            unit_of_measurement: "%"
-    sequence:
-      - action: number.set_value
-        target:
-          entity_id: number.alphaess_inverter_force_export_stop_at_soc
-        data:
-          value: >-
-            {% set d = state_attr('predbat.status', 'detail') | default('', true) %}
-            {% set vals = d | regex_findall('([0-9]+(?:\\.[0-9]+)?)%') %}
-            {% if is_state('predbat.status', 'Exporting') and vals %}
-              {{ vals | last | float }}
-            {% else %}
-              {{ target_soc | float(0) }}
-            {% endif %}
-
 automation:
   - id: predbat_alphaess_charge_rate_bridge
     alias: PredBat AlphaESS Charge Rate Bridge
@@ -100,78 +66,23 @@ automation:
     mode: restart
 
   - id: predbat_alphaess_export_rate_bridge
-    alias: PredBat AlphaESS Export Rate Bridge
+    alias: PredBat AlphaESS Discharge Rate Bridge
     description: >-
-      Convert PredBat's requested discharge/export rate in watts to the
-      AlphaESS Force Export Power control in kW.
+      Convert PredBat's requested battery discharge rate in watts to the
+      AlphaESS Force Discharging Power control in kW.
     triggers:
       - trigger: state
         entity_id: input_number.predbat_alphaess_export_rate_w
       - trigger: state
-        entity_id: switch.alphaess_inverter_force_export
+        entity_id: switch.alphaess_inverter_force_discharging
         to: "on"
     conditions: []
     actions:
       - action: number.set_value
         target:
-          entity_id: number.alphaess_inverter_force_export_power
+          entity_id: number.alphaess_inverter_force_discharging_power
         data:
           value: >-
             {{ (states('input_number.predbat_alphaess_export_rate_w')
                 | float(0) / 1000) | round(1) }}
-    mode: restart
-
-  - id: predbat_alphaess_export_soc_sync
-    alias: PredBat AlphaESS Export SOC Sync
-    description: >-
-      While PredBat is actively Exporting, update AlphaESS's export-stop SoC
-      after replans only when predbat.status contains a parseable percentage.
-      Once the Modbus write has settled, recover Force Export only when its
-      physical switch is off and battery SoC is more than one percentage point
-      above the configured stop target. Preserve the existing target and do not
-      restart export if PredBat's detail format cannot be parsed.
-    triggers:
-      - trigger: state
-        entity_id: predbat.status
-    conditions:
-      - condition: state
-        entity_id: predbat.status
-        state: Exporting
-      - condition: template
-        value_template: >-
-          {{ (state_attr('predbat.status', 'detail') | default('', true)
-               | regex_findall('([0-9]+(?:\\.[0-9]+)?)%') | count) > 0 }}
-    actions:
-      - action: script.turn_on
-        target:
-          entity_id: script.predbat_alphaess_export_stop_soc
-        data:
-          variables:
-            target_soc: >-
-              {{ states('number.alphaess_inverter_force_export_stop_at_soc')
-                 | float(0) }}
-
-      - delay: "00:00:01"
-
-      - if:
-          - condition: state
-            entity_id: predbat.status
-            state: Exporting
-          - condition: state
-            entity_id: switch.alphaess_inverter_force_export
-            state: "off"
-          - condition: template
-            value_template: >-
-              {{ states('sensor.alphaess_inverter_battery_state_of_charge')
-                   not in ['unknown', 'unavailable']
-                 and states('number.alphaess_inverter_force_export_stop_at_soc')
-                   not in ['unknown', 'unavailable']
-                 and states('sensor.alphaess_inverter_battery_state_of_charge')
-                   | float
-                   > (states('number.alphaess_inverter_force_export_stop_at_soc')
-                      | float + 1) }}
-        then:
-          - action: switch.turn_on
-            target:
-              entity_id: switch.alphaess_inverter_force_export
     mode: restart
