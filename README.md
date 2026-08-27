@@ -172,6 +172,14 @@ The start service then sets a bounded duration and enables `switch.alphaess_inve
 
 Test with a short, conservative export while watching battery power, grid power, house load and PV. Battery power should follow PredBat's requested discharge rate; grid export will be the remaining power after the house load is supplied and PV is included. Confirm the forced mode stops at the target SoC and that PredBat's stop service turns it off.
 
+### DNO and grid-export limits
+
+Force Discharging controls battery-side power; it does **not** dynamically hold grid export at a DNO limit. Approximate grid export is battery discharge plus PV generation, minus house load. If the permitted export limit is below the possible combined battery and solar output, Force Discharging can therefore exceed that limit.
+
+PredBat's `export_limit` setting models an inverter's export ceiling when producing the plan, but it does not enforce that ceiling at the inverter. `inverter_limit_export` can cap the requested battery discharge rate, but it does not dynamically subtract changing PV generation or house load.
+
+For an installation with a restrictive DNO limit, use a separately verified export-limiting control, choose a conservative discharge cap that remains safe under expected PV conditions, or retain AlphaESS Force Export if its grid-side regulation is required. Keep any inverter-native or installer-configured export limitation enabled. Do not rely on PredBat planning, voltage protection or this example alone to enforce a statutory grid-export limit.
+
 ### Migrating from the earlier Force Export example
 
 If you installed an earlier version of this repository, update both `apps.yaml` and the Home Assistant discharge-rate bridge. The bridge keeps the existing `predbat_alphaess_export_rate_bridge` automation ID and `input_number.predbat_alphaess_export_rate_w` helper ID to avoid creating duplicates, but now targets the Force Discharging controls.
