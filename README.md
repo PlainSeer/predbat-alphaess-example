@@ -274,10 +274,10 @@ Do not change a capability flag simply because another inverter example uses a d
 
 - `charge_start_service` and `charge_stop_service` start and stop force charging.
 - `discharge_start_service` and `discharge_stop_service` start and stop Force Discharging.
-- `charge_freeze_service` maps PredBat charge freeze to AlphaESS Normal Mode (5).
+- `charge_freeze_service` maps PredBat charge freeze to AlphaESS Battery only Charges from PV (1), with Dispatch power explicitly set to `-8.0` kW.
 - `discharge_freeze_service` maps PredBat discharge freeze to AlphaESS No Battery Charge (19).
 
-Every start sequence first releases conflicting AlphaESS modes. Every stop sequence releases Dispatch so a previous hold is not left behind.
+Every start sequence first releases conflicting AlphaESS modes. The AlphaESS Dispatch power register is retained and shared between Dispatch modes, so both freeze services explicitly write the value their selected mode requires. Every stop sequence releases Dispatch so a previous hold is not left behind.
 
 ### Live sensors and direction flags
 
@@ -358,10 +358,11 @@ PredBat freeze capabilities are mapped to AlphaESS Dispatch modes. PredBat's pla
 Charge freeze uses:
 
 ```yaml
-option: "Normal Mode (5)"
+option: "Battery only Charges from PV (1)"
+dispatch_power: -8.0
 ```
 
-The sequence stops conflicting forced modes, selects Normal Mode, sets a bounded Dispatch duration and enables Dispatch. This retains normal self-consumption rather than forcing grid charging.
+The sequence stops conflicting forced modes, selects Battery only Charges from PV, explicitly sets Dispatch power to `-8.0` kW, sets a bounded Dispatch duration and enables Dispatch. The negative value permits up to 8 kW of PV battery charging while the mode prevents battery discharge; it does not request grid charging.
 
 ### Freeze Export / discharge freeze
 
@@ -369,9 +370,12 @@ Discharge freeze uses:
 
 ```yaml
 option: "No Battery Charge (19)"
+dispatch_power: 0
 ```
 
-The sequence stops conflicting forced modes, selects No Battery Charge, sets a bounded Dispatch duration and enables Dispatch.
+The sequence stops conflicting forced modes, selects No Battery Charge, explicitly resets Dispatch power to `0`, sets a bounded Dispatch duration and enables Dispatch. Resetting the shared register prevents this mode from inheriting the `-8.0` kW value used by charge freeze.
+
+Do not omit either Dispatch power write. Selecting a new Dispatch mode does not itself prove that the retained power value has been reset.
 
 Verify the mode names and numbers against the options exposed by your AlphaESS integration.
 

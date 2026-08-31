@@ -182,7 +182,9 @@ pred_bat:
   # the battery, and the battery may discharge to cover house demand when
   # PV is insufficient.
   #
-  # AlphaESS Dispatch Mode 5 = Normal Mode.
+  # AlphaESS Dispatch Mode 1 = Battery only Charges from PV.
+  # The Dispatch power register is shared between modes, so set it
+  # explicitly rather than inheriting a stale value from another hold.
   # ---------------------------------------------------------------
 
   charge_freeze_service:
@@ -207,7 +209,12 @@ pred_bat:
 
     - service: select.select_option
       entity_id: select.alphaess_inverter_dispatch_mode
-      option: "Normal Mode (5)"
+      option: "Battery only Charges from PV (1)"
+
+    # Negative Dispatch power permits up to 8 kW of PV battery charging.
+    - service: number.set_value
+      entity_id: number.alphaess_inverter_dispatch_power
+      value: -8.0
 
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_duration
@@ -272,6 +279,8 @@ pred_bat:
   # rather than stored.
   #
   # AlphaESS Dispatch Mode 19 = No Battery Charge.
+  # The Dispatch power register is shared between modes, so set it
+  # explicitly rather than inheriting Charge Freeze's -8 kW value.
   # ---------------------------------------------------------------
 
   discharge_freeze_service:
@@ -297,6 +306,10 @@ pred_bat:
     - service: select.select_option
       entity_id: select.alphaess_inverter_dispatch_mode
       option: "No Battery Charge (19)"
+
+    - service: number.set_value
+      entity_id: number.alphaess_inverter_dispatch_power
+      value: 0
 
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_duration
