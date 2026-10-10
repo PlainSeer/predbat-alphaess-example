@@ -78,23 +78,67 @@ predbat_alphaess_export_stop_soc:
 - id: predbat_alphaess_export_rate_bridge
   alias: PredBat AlphaESS Discharge Rate Bridge
   description: >-
-    Convert PredBat's requested battery discharge rate in watts to the AlphaESS
-    Force Discharging Power control in kW.
+    Modulate only an already-active PredBat Force Discharging session. While
+    PredBat is Exporting and Force Discharging is on, set the AlphaESS discharge
+    power to max(PredBat requested discharge W, house load W - PV W, 0), capped
+    at 8000 W and rounded to 0.1 kW; skip changes below 0.2 kW. Otherwise clear
+    nonzero discharge power. Never start, stop or re-enable Force Discharging;
+    PredBat retains switch, duration and stop-SOC ownership.
   triggers:
     - trigger: state
-      entity_id: input_number.predbat_alphaess_export_rate_w
-    - trigger: state
-      entity_id: switch.alphaess_inverter_force_discharging
-      to: "on"
+      entity_id:
+        - input_number.predbat_alphaess_export_rate_w
+        - predbat.status
+        - switch.alphaess_inverter_force_discharging
+        - sensor.alphaess_inverter_current_house_load
+        - sensor.alphaess_inverter_current_pv_production
   conditions: []
   actions:
-    - action: number.set_value
-      target:
-        entity_id: number.alphaess_inverter_force_discharging_power
-      data:
-        value: >-
-          {{ (states('input_number.predbat_alphaess_export_rate_w')
-              | float(0) / 1000) | round(1) }}
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: predbat.status
+              state: Exporting
+            - condition: state
+              entity_id: switch.alphaess_inverter_force_discharging
+              state: "on"
+          sequence:
+            - variables:
+                target_kw: >-
+                  {{ (([8000, ([0,
+                      states('input_number.predbat_alphaess_export_rate_w') | float(0),
+                      (states('sensor.alphaess_inverter_current_house_load') | float(0))
+                      - (states('sensor.alphaess_inverter_current_pv_production') | float(0))]
+                      | max)] | min) / 1000) | round(1) }}
+            - condition: template
+              value_template: >-
+                {{ (((target_kw | float(0))
+                    - (states('number.alphaess_inverter_force_discharging_power') | float(0)))
+                    | abs | round(3)) >= 0.2 }}
+            - condition: state
+              entity_id: predbat.status
+              state: Exporting
+            - condition: state
+              entity_id: switch.alphaess_inverter_force_discharging
+              state: "on"
+            - action: number.set_value
+              target:
+                entity_id: number.alphaess_inverter_force_discharging_power
+              data:
+                value: >-
+                  {{ target_kw
+                     if is_state('predbat.status', 'Exporting')
+                     and is_state('switch.alphaess_inverter_force_discharging', 'on')
+                     else 0 }}
+      default:
+        - condition: numeric_state
+          entity_id: number.alphaess_inverter_force_discharging_power
+          above: 0
+        - action: number.set_value
+          target:
+            entity_id: number.alphaess_inverter_force_discharging_power
+          data:
+            value: 0
   mode: restart
 
 - id: predbat_alphaess_export_soc_sync
