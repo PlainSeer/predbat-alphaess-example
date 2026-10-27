@@ -300,8 +300,8 @@ Do not change a capability flag simply because another inverter example uses a d
 
 - `charge_start_service` and `charge_stop_service` start and stop force charging.
 - `discharge_start_service` and `discharge_stop_service` start and stop Force Discharging.
-- `charge_freeze_service` maps PredBat charge freeze to AlphaESS Battery only Charges from PV (1), with Dispatch power explicitly set to `-8.0` kW.
-- `discharge_freeze_service` maps PredBat discharge freeze to AlphaESS No Battery Charge (19).
+- `charge_freeze_service` maps Freeze Charge and standalone Hold for Car to AlphaESS Battery only Charges from PV (1), with Dispatch power explicitly set to `-8.0` kW. This retains the PV-permitting hold mapping.
+- `discharge_freeze_service` maps PredBat Freeze Export to AlphaESS State of Charge Control (2), with Dispatch power explicitly set to `"0"` kW for the full-freeze command.
 
 Every start sequence first releases conflicting AlphaESS modes. The AlphaESS Dispatch power register is retained and shared between Dispatch modes, so both freeze services explicitly write the value their selected mode requires. Every stop sequence releases Dispatch so a previous hold is not left behind.
 
@@ -368,58 +368,76 @@ Before starting a new charge or discharge operation, the example turns off an ac
 
 The discharge sequence calls the target script, sets a bounded Force Discharging duration, and enables Force Discharging. Subsequent PredBat status updates resynchronise the displayed endpoint. The separate discharge-rate bridge modulates power only while that PredBat-owned session remains active.
 
-## Freeze mappings
+## Freeze and Hold for Car mappings
 
-PredBat freeze capabilities are mapped to AlphaESS Dispatch modes. PredBat's plan uses the name **Freeze Export**, while the custom-inverter configuration uses the service name `discharge_freeze_service`.
+PredBat's plan names differ from the custom-inverter service names. This example uses PredBat's existing service hooks and requires no source-code changes.
 
-| PredBat plan state | Service used from `apps.yaml` |
-|---|---|
-| Freeze Charge | `charge_freeze_service` |
-| Freeze Export | `discharge_freeze_service` |
-| Export | `discharge_start_service` |
-| End Export or Freeze Export | `discharge_stop_service` |
+| PredBat state | Control path | AlphaESS command |
+|---|---|---|
+| Freeze Export | `discharge_freeze_service` | State of Charge Control (2), 0 kW: full battery freeze command |
+| Freeze Charge | `charge_freeze_service` | Battery only Charges from PV (1), −8 kW: PV-permitting hold |
+| Standalone Hold for Car | `charge_freeze_service` | Same PV-permitting hold as Freeze Charge |
+| Charging, Hold for Car | Normal charging path | Planned battery charging continues |
+| Export | `discharge_start_service` | Force Discharging with the existing rate bridge and stop-SoC script |
+| End Export or Freeze Export | `discharge_stop_service` | Release forced discharge and Dispatch |
 
-### Charge freeze
+**Full battery freeze is mapped to Freeze Export only.** Freeze Charge and standalone Hold for Car share the other hook in the inspected PredBat v9.5.3 control path. Hold for Car itself does not request grid charging; the normal charging plan determines that separately.
 
-Charge freeze uses:
+### Full battery freeze: Freeze Export
 
-```yaml
-option: "Battery only Charges from PV (1)"
-dispatch_power: -8.0
-```
-
-The sequence stops conflicting forced modes, selects Battery only Charges from PV, explicitly sets Dispatch power to `-8.0` kW, sets a bounded Dispatch duration and enables Dispatch. The negative value permits up to 8 kW of PV battery charging while the mode prevents battery discharge; it does not request grid charging.
-
-### Freeze Export / discharge freeze
-
-Discharge freeze uses:
+The relevant entries in `discharge_freeze_service` are:
 
 ```yaml
-option: "No Battery Charge (19)"
-dispatch_power: 0
+- service: select.select_option
+  entity_id: select.alphaess_inverter_dispatch_mode
+  option: "State of Charge Control (2)"
+
+- service: number.set_value
+  entity_id: number.alphaess_inverter_dispatch_power
+  value: "0"
 ```
 
-The sequence stops conflicting forced modes, selects No Battery Charge, explicitly resets Dispatch power to `0`, sets a bounded Dispatch duration and enables Dispatch. Resetting the shared register prevents this mode from inheriting the `-8.0` kW value used by charge freeze.
+The full sequence stops conflicting forced modes and any existing Dispatch, selects Mode 2, explicitly writes zero power, sets a bounded Dispatch duration and enables Dispatch. The intended behaviour is no battery charging or discharging: PV can serve the house and surplus PV exports, subject to the system's export limits.
 
-Do not omit either Dispatch power write. Selecting a new Dispatch mode does not itself prove that the retained power value has been reset.
+Keep the zero quoted. In the inspected [PredBat v9.5.3 service-template code](https://github.com/springfall2008/batpred/blob/v9.5.3/apps/predbat/inverter.py), a numeric `0` is omitted by a truth-value check; the string `"0"` is retained and passed to Home Assistant. Omitting the write could leave the shared Dispatch power setting at the previous hold's −8 kW.
 
-Verify the mode names and numbers against the options exposed by your AlphaESS integration.
+A controlled test on the example system confirmed Mode 2 with zero active dispatch power and measured battery power reaching 0 W after activation. PV was below house demand during that recorded test, so it establishes stopped discharge, not an independent surplus-PV charging/export test. Verify both directions on your inverter and firmware during commissioning.
 
-### Stop services
+### PV-permitting hold: Freeze Charge / Hold for Car
 
-The charge and discharge stop services also turn off Dispatch so a temporary hold does not remain active.
-
-## Low-rate export freeze
-
-The example contains:
+The existing `charge_freeze_service` keeps:
 
 ```yaml
-inverter_freeze_export_discharge_rate: 240
+- service: select.select_option
+  entity_id: select.alphaess_inverter_dispatch_mode
+  option: "Battery only Charges from PV (1)"
+
+- service: number.set_value
+  entity_id: number.alphaess_inverter_dispatch_power
+  value: -8.0
 ```
 
-This is a PredBat prediction-model setting; it does not command the inverter to discharge at 240 W. During Freeze Export, this AlphaESS system was observed to leak a small, fairly steady amount of battery power instead of discharging enough to cover the full house load. The value `240` is a rounded representative average of that observed battery-side discharge on this particular installation.
+The negative Dispatch power retains the example's allowance for PV battery charging; it does not request grid charging. The 8 kW magnitude is installation-specific and must be checked against your equipment.
 
-It is not a universal AlphaESS value, an inverter minimum or a safety limit. Another installation should measure its sustained battery power over several Freeze Export periods, exclude short switching transients, and use a representative average only if the same fixed-leak behaviour is present. Leave the setting at PredBat's default of `0` if the inverter normally covers house load during Freeze Export or if the behaviour has not been established. Recheck the value after inverter firmware, operating-mode or control changes.
+This is distinct from full freeze. Verify that the hold prevents unwanted battery support of the EV on your system: residual discharge was observed with Mode 1 at −8 kW in the recorded tests, so the mode name alone is not proof of zero discharge. During **Charging, Hold for Car**, PredBat retains the normal battery-charging path instead of substituting this standalone hold.
+
+### Releasing a hold
+
+Both stop services turn off Dispatch. Normal charge and export start sequences also release the earlier Dispatch hold before enabling their forced mode. Retain these release steps so Demand/ECO and later planned operations can resume.
+
+Verify the mode names and numbers against the options exposed by your installed AlphaESS integration. The Dispatch duration is a time bound, not a substitute for the stop services.
+
+## Freeze prediction and the former 240 W override
+
+The sample leaves the earlier installation-specific override disabled:
+
+```yaml
+# inverter_freeze_export_discharge_rate: 240
+```
+
+That setting models a fixed battery discharge during Freeze Export; it does not command inverter power. The former 240 W assumption is not appropriate to the zero-power freeze command and should not be copied as an AlphaESS default.
+
+There is a separate prediction limitation: in the inspected [PredBat v9.5.3 prediction source](https://github.com/springfall2008/batpred/blob/v9.5.3/apps/predbat/prediction.py), leaving this setting unset (default `0`) restores the normal battery-to-house discharge calculation during Freeze Export. It does **not** make the prediction model assume zero battery discharge. The configured hardware command and projected SoC/grid flows can therefore differ. Commenting out `240` removes that fixed-discharge assumption; it does not align the prediction with full hardware freeze. This example changes service configuration only.
 
 ## Power and energy sensors
 
@@ -444,8 +462,8 @@ Set the `*_invert` flags only after observing the live direction conventions. Us
 6. Add the customised AlphaESS block with PredBat in Monitor/read-only mode.
 7. Check all live power directions and daily totals.
 8. Check battery capacity, minimum SoC and every power limit.
-9. Verify charge freeze and discharge freeze start and clear correctly.
-10. Verify a new charge/discharge operation clears a previous Dispatch hold.
+9. Verify Freeze Export sends Mode 2 with zero Dispatch power and stops battery discharge; with surplus PV available, also verify no battery charging and the expected grid export. Separately test the Mode 1 PV-permitting hold, standalone Hold for Car and Charging, Hold for Car.
+10. Verify a new charge/discharge operation clears a previous Dispatch hold, grid/PV charging and deliberate discharge/export still work, and returning to Demand/ECO releases the hold. Compare actual SoC and grid flows with the plan in light of the prediction limitation above.
 11. During a short controlled export, confirm low house load follows the PredBat requested discharge rate, then introduce a modest additional house load and confirm the bridge raises discharge toward `house load - PV` without exceeding the configured cap.
 12. End the PredBat export and confirm Force Discharging turns off, discharge power clears to `0`, and later house-load/PV changes do not re-enable or restore the old discharge command.
 13. Confirm AlphaESS receives the final percentage displayed by PredBat and stops at the target SoC.

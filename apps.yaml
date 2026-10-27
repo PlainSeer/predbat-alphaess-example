@@ -175,16 +175,9 @@ pred_bat:
 
 
   # ---------------------------------------------------------------
-  # Charge Freeze
-  #
-  # User preference: do not force-charge from grid, but continue normal
-  # self-consumption. PV supplies the house first, surplus PV may charge
-  # the battery, and the battery may discharge to cover house demand when
-  # PV is insufficient.
-  #
-  # AlphaESS Dispatch Mode 1 = Battery only Charges from PV.
-  # The Dispatch power register is shared between modes, so set it
-  # explicitly rather than inheriting a stale value from another hold.
+  # Charge Freeze / Hold for Car
+  # Mode 1 at -8 kW retains the PV-permitting hold mapping.
+  # Full battery freeze is provided separately by Freeze Export below.
   # ---------------------------------------------------------------
 
   charge_freeze_service:
@@ -267,20 +260,9 @@ pred_bat:
 
 
   # ---------------------------------------------------------------
-  # Freeze Export (PredBat discharge freeze)
-  #
-  # When the PredBat plan shows "Freeze Export", PredBat calls
-  # discharge_freeze_service. When that period ends, it calls
-  # discharge_stop_service.
-  #
-  # User preference: prevent battery charging, while continuing normal
-  # self-consumption. PV supplies the house first; if PV is insufficient
-  # the battery may discharge to cover house demand. Surplus PV is exported
-  # rather than stored.
-  #
-  # AlphaESS Dispatch Mode 19 = No Battery Charge.
-  # The Dispatch power register is shared between modes, so set it
-  # explicitly rather than inheriting Charge Freeze's -8 kW value.
+  # Full battery freeze - PredBat Freeze Export
+  # Mode 2 at 0 kW requests no battery charging or discharging.
+  # Quote zero so PredBat includes it in the service call.
   # ---------------------------------------------------------------
 
   discharge_freeze_service:
@@ -305,11 +287,11 @@ pred_bat:
 
     - service: select.select_option
       entity_id: select.alphaess_inverter_dispatch_mode
-      option: "No Battery Charge (19)"
+      option: "State of Charge Control (2)"
 
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_power
-      value: 0
+      value: "0"
 
     - service: number.set_value
       entity_id: number.alphaess_inverter_dispatch_duration
@@ -381,8 +363,8 @@ pred_bat:
   pv_today:
     - sensor.alphaess_inverter_today_s_pv_generation
 
-  # PredBat uses a low discharge rate while holding an export freeze.
-  inverter_freeze_export_discharge_rate: 240
+  # Former fixed-discharge prediction override; see README for model limitations.
+  # inverter_freeze_export_discharge_rate: 240
 
   # ---------------------------------------------------------------
   # Battery / inverter characteristics
